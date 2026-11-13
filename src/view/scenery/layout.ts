@@ -214,7 +214,7 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
   // ---- Facades.
   for (const side of [1, -1] as const) {
     const quaySide = harbor && side < 0;
-    const segs = facadeRow(rnd, widths[zone], quaySide ? [12, 16, 20] : [4], quaySide ? 0.65 : 0.1, quaySide ? low?.[zone] : undefined);
+    const segs = facadeRow(rnd, widths[zone], quaySide ? [12, 16, 20] : [4], quaySide ? 0.65 : 0.15, quaySide ? low?.[zone] : undefined);
     let u = 0;
     for (const sg of segs) {
       const uc = u + sg.w / 2;

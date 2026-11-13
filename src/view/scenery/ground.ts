@@ -60,7 +60,7 @@ function roadSurface(mb: MeshBuilder, rnd: Rand, variant: number): void {
   for (const [x, u] of holes) {
     mb.push().translate(x, 0.012, -u);
     mb.cylinder(0.42, 0.024, 10, {}, 0x3b4048);
-    mb.cylinder(0.3, 0.03, 10, {}, 0x474d56);
+    mb.cylinder(0.3, 0.05, 10, {}, 0x474d56);
     mb.pop();
   }
   for (const side of [-1, 1]) {

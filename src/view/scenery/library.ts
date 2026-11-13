@@ -3,7 +3,7 @@
 // only ever an arrangement of instances of these.
 import type { MeshBuilder } from '../geom';
 import { buildBackRow, buildFar } from './backdrop';
-import { buildBuilding, zoneSpecs, zoneWalls, type ZoneFamily } from './buildings';
+import { buildBuilding, shadowBoxes, zoneSpecs, zoneWalls, type Box, type ZoneFamily } from './buildings';
 import { buildGround, buildLotFill, buildSea, GROUND_VARIANTS } from './ground';
 import { VARIANTS, type WidthTable } from './layout';
 import { buildBunting, buildGate, buildLanterns } from './overhead';
@@ -28,7 +28,8 @@ export function moduleDefs(): Map<string, ModuleDef> {
   add('fill:quay', () => buildLotFill('quay'));
   add('sea', buildSea, false, 'water');
   for (const z of [0, 1, 2] as ZoneFamily[]) {
-    zoneSpecs(z).forEach((spec, i) => add(`b${z}_${i}`, () => buildBuilding(spec, zoneWalls(z)), true));
+    // Buildings cast through shadow proxies (shadowTable), not their detailed geometry.
+    zoneSpecs(z).forEach((spec, i) => add(`b${z}_${i}`, () => buildBuilding(spec, zoneWalls(z))));
     add(`gate${z}`, () => buildGate(z), true);
   }
   for (let v = 0; v < VARIANTS.backTown; v++) add(`back:town:${v}`, () => buildBackRow('town', v));
@@ -56,4 +57,11 @@ export function widthTable(): WidthTable {
 /** Low variants (<= 2 storeys) per zone: the harbour's sea side uses only these. */
 export function lowTable(): boolean[][] {
   return ([0, 1, 2] as ZoneFamily[]).map((z) => zoneSpecs(z).map((s) => s.floors <= 2));
+}
+
+/** Shadow-caster boxes per building module key (see shadowBoxes). */
+export function shadowTable(): Map<string, Box[]> {
+  const m = new Map<string, Box[]>();
+  for (const z of [0, 1, 2] as ZoneFamily[]) zoneSpecs(z).forEach((spec, i) => m.set(`b${z}_${i}`, shadowBoxes(spec)));
+  return m;
 }

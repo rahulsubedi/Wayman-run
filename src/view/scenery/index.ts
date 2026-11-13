@@ -9,13 +9,14 @@
 // - A chunk's content depends only on its index and the zone at its own start s (plus the debug
 //   zone offset), so the next zone is already visible ahead and layout is deterministic.
 // - Chunk nodes are placed once with stage.worldZ() and shifted on origin re-base.
-import { Container3D, Mesh3D } from '@pixi/3d';
+import { Container3D, CubeGeometry, Mesh3D } from '@pixi/3d';
 import type { Geometry3D, Material3D } from '@pixi/3d';
 import { ZONE_COUNT, ZONE_LENGTH } from '../../sim/config';
 import type { Stage } from '../stage';
 import { chunkZone, layoutChunk, type AnimKind, type WidthTable } from './layout';
 import { CHUNK_LEN } from './layoutConst';
-import { lowTable, moduleDefs, widthTable } from './library';
+import type { Box } from './buildings';
+import { lowTable, moduleDefs, shadowTable, widthTable } from './library';
 import { sceneryMaterial, waterMaterial } from './material';
 
 /**
@@ -52,6 +53,9 @@ interface Chunk {
   index: number;
   zone: number;
   statics: Mesh3D[];
+  /** Shadow-only unit boxes standing in for the detailed buildings in the shadow pass. */
+  proxies: Mesh3D[];
+  proxyCount: number;
   /** Which static slots hold small clutter (toggled by distance). */
   small: boolean[];
   staticCount: number;
@@ -67,6 +71,7 @@ export class SceneryView {
   private readonly modules = new Map<string, Module>();
   private readonly widths: WidthTable;
   private readonly low: boolean[][];
+  private readonly shadows: Map<string, Box[]>;
   private readonly chunks: Chunk[] = [];
   private zoneOffset = 0;
   private lastS = 0;
@@ -77,6 +82,7 @@ export class SceneryView {
     stage.world.addChild(this.root);
     this.widths = widthTable();
     this.low = lowTable();
+    this.shadows = shadowTable();
 
     // ---- Build the module library (the only geometry building we ever do).
     const main = sceneryMaterial();
@@ -106,7 +112,7 @@ export class SceneryView {
       for (let i = 0; i < maxAnim; i++) {
         anims.push({ mesh: new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }), kind: 'swing', phase: 0, baseY: 0 });
       }
-      this.chunks.push({ node, index: Number.NaN, zone: -1, statics, small: statics.map(() => false), staticCount: 0, detail: true, anims, animCount: 0 });
+      this.chunks.push({ node, index: Number.NaN, zone: -1, statics, proxies: [], proxyCount: 0, small: statics.map(() => false), staticCount: 0, detail: true, anims, animCount: 0 });
     }
 
     stage.onRebase((dz) => {
@@ -114,6 +120,17 @@ export class SceneryView {
     });
 
     this.prewarm();
+
+    // Shadow proxies: one shared unit cube, drawn only in the shadow pass (created after the
+    // warm-up render so the 'opaque' pass name is registered for disablePass).
+    const unit = new CubeGeometry({ width: 1, height: 1, depth: 1 });
+    for (const ch of this.chunks) {
+      for (let i = 0; i < 40; i++) {
+        const p = new Mesh3D({ parent: ch.node, geometry: unit, material: main, visible: false, castShadow: true, receiveShadow: false });
+        p.disablePass('opaque');
+        ch.proxies.push(p);
+      }
+    }
     this.relayout(0);
   }
 
@@ -137,18 +154,22 @@ export class SceneryView {
 
     const first = Math.floor((playerS - BEHIND) / CHUNK_LEN);
     const last = first + CHUNK_COUNT - 1;
+    const chunks = this.chunks;
+    // Index loops only: update() runs every frame and must not allocate.
     for (let k = first; k <= last; k++) {
       let have = false;
-      for (const ch of this.chunks) if (ch.index === k) { have = true; break; }
+      for (let c = 0; c < chunks.length; c++) if (chunks[c].index === k) { have = true; break; }
       if (have) continue;
-      for (const ch of this.chunks) {
+      for (let c = 0; c < chunks.length; c++) {
+        const ch = chunks[c];
         if (!(ch.index >= first && ch.index <= last)) {
           this.place(ch, k);
           break;
         }
       }
     }
-    for (const ch of this.chunks) {
+    for (let c = 0; c < chunks.length; c++) {
+      const ch = chunks[c];
       const want = ch.index * CHUNK_LEN - playerS < DETAIL_AHEAD;
       if (want !== ch.detail) this.setDetail(ch, want);
     }
@@ -189,6 +210,24 @@ export class SceneryView {
     }
     ch.staticCount = n;
     for (let i = n; i < ch.statics.length; i++) ch.statics[i].visible = false;
+    // Shadow proxies for the buildings of this chunk.
+    let pc = 0;
+    for (const it of lay.items) {
+      const boxes = this.shadows.get(it.key);
+      if (!boxes) continue;
+      const c = Math.cos(it.rot), sn = Math.sin(it.rot);
+      for (const b of boxes) {
+        if (pc >= ch.proxies.length) break;
+        const p = ch.proxies[pc++];
+        const cx = (b[0] + b[3]) / 2, cz = (b[2] + b[5]) / 2;
+        p.position.set(it.x + c * cx + sn * cz, it.y + (b[1] + b[4]) / 2, -it.u - sn * cx + c * cz);
+        p.rotation.y = it.rot;
+        p.scale.set(b[3] - b[0], b[4] - b[1], b[5] - b[2]);
+        p.visible = true;
+      }
+    }
+    ch.proxyCount = pc;
+    for (let i = pc; i < ch.proxies.length; i++) ch.proxies[i].visible = false;
     let a = 0;
     for (const it of lay.anim) {
       const mod = this.modules.get(it.key);
@@ -209,7 +248,8 @@ export class SceneryView {
 
   private animate(): void {
     const t = this.time;
-    for (const ch of this.chunks) {
+    for (let c = 0; c < this.chunks.length; c++) {
+      const ch = this.chunks[c];
       for (let i = 0; i < ch.animCount; i++) {
         const s = ch.anims[i];
         const m = s.mesh;

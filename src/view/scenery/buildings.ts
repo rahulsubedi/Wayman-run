@@ -240,13 +240,13 @@ export function buildBuilding(spec: BuildingSpec, wallsPalette: readonly number[
     case 'cafe': {
       const shopH = gh - 1.0;
       shopfront(mb, look, -half + 0.45, half - 0.45, shopH, doorBay, spec.ground === 'cafe' ? Math.max(2, nb) : nb);
-      fascia(mb, look, -half + 0.45, half - 0.45, shopH + 0.22, gh - 0.1);
+      fascia(mb, look, -half + 0.45, half - 0.45, shopH + 0.5, gh - 0.02);
       if (spec.awning !== false) {
         const pair = P.AWNING_PAIRS[rnd.int(P.AWNING_PAIRS.length)];
-        awning(mb, -half + 0.5, half - 0.5, shopH + 0.1, spec.ground === 'cafe' ? 2.3 : 1.7, 0.95, pair, look.night);
-        if (look.night) bulbString(mb, -half + 0.6, half - 0.6, shopH - 0.95, -(spec.ground === 'cafe' ? 2.3 : 1.7) + 0.05, P.LANTERN, rnd);
+        awning(mb, -half + 0.5, half - 0.5, shopH + 0.42, spec.ground === 'cafe' ? 2.2 : 1.7, 0.62, pair, look.night);
+        if (look.night) bulbString(mb, -half + 0.6, half - 0.6, shopH - 0.55, -(spec.ground === 'cafe' ? 2.2 : 1.7) + 0.05, P.LANTERN, rnd);
       } else if (look.night) {
-        bulbString(mb, -half + 0.6, half - 0.6, shopH + 0.05, -0.4, P.LANTERN, rnd);
+        bulbString(mb, -half + 0.6, half - 0.6, shopH + 0.38, -0.4, P.LANTERN, rnd);
       }
       break;
     }
@@ -451,8 +451,6 @@ export function buildBuilding(spec: BuildingSpec, wallsPalette: readonly number[
   mb.pop();
   // Flower boxes on the first floor of some buildings regardless of style (market life).
   if (!spec.night && spec.upper === 'shutters' && rnd.chance(0.3)) flowerBox(mb, look, zc(0), GROUND_H + 0.6, 1.2);
-  void NZ;
-  void PZ;
   return mb;
 }
 
@@ -472,6 +470,41 @@ function simpleWindow(mb: MeshBuilder, look: Look, zc: number, y0: number, ww: n
 function glassPaintFor(look: Look) {
   if (look.night && look.rnd.chance(0.45)) return glowPaint(P.LIGHT_AMBER, 0.28);
   return look.night ? { color: 0x1c2533 } : { color: 0x3b5566, top: P.GLASS_TOP, bottom: P.GLASS_BOTTOM, jitter: 0.06 };
+}
+
+/** Axis-aligned box [x0, y0, z0, x1, y1, z1] in the building's local frame. */
+export type Box = [number, number, number, number, number, number];
+
+/**
+ * Coarse shadow-caster boxes for a building (body incl. a roof allowance, setback block, awning).
+ * The view draws these with ONE shared unit-box geometry in the shadow pass only, so all building
+ * shadows cost a single instanced draw per cascade instead of one per detailed variant.
+ */
+export function shadowBoxes(spec: BuildingSpec): Box[] {
+  const D = spec.depth ?? 12;
+  const H = buildingHeight(spec);
+  const half = spec.w / 2;
+  const off = spec.setback ? 1.6 : 0;
+  const yTop = spec.setback ? GROUND_H + (spec.floors - 2) * FLOOR_H : H;
+  let roof = 0;
+  if (spec.roof === 'parapet' || spec.roof === 'terrace' || spec.roof === 'tower') roof = 0.8;
+  else if (spec.roof === 'tile') roof = Math.min(4.2, (D - off) * 0.38) * 0.55;
+  else if (spec.roof === 'hip') roof = Math.min(3.2, Math.min(D, spec.w) * 0.33) * 0.45;
+  else if (spec.roof === 'gable') roof = Math.min(4.5, spec.w * 0.35) * 0.55;
+  else if (spec.roof === 'shedroof') roof = 1.0;
+  const out: Box[] = [];
+  if (off > 0) {
+    out.push([0, 0, -half, D, yTop, half]);
+    out.push([off, yTop, -half, D, H + roof, half]);
+  } else out.push([0, 0, -half, D, H + roof, half]);
+  if (spec.roof === 'tower') out.push([0.9, H, -1.3, 3.5, H + 6.2, 1.3]);
+  if ((spec.ground === 'shop' || spec.ground === 'cafe') && spec.awning !== false) {
+    const shopH = GROUND_H - 0.25 - 1.0;
+    const o = spec.ground === 'cafe' ? 2.2 : 1.7;
+    out.push([-o, shopH - 0.1, -half + 0.5, 0, shopH + 0.42, half - 0.5]);
+  }
+  if (spec.ground === 'shed') out.push([-1.6, GROUND_H - 0.5, -half + 0.1, 0, GROUND_H + 0.1, half - 0.1]);
+  return out;
 }
 
 // ------------------------------------------------------------------------- catalogues

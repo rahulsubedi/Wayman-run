@@ -269,7 +269,6 @@ export function door(mb: MeshBuilder, look: Look, zc: number, w: number, h: numb
   }
   // Step.
   slab(mb, -0.5, 0.15, z0 - 0.25, 0, 0.27, z1 + 0.25, 0xd8d1c2, NX | PY | PZ | NZ);
-  void PX;
 }
 
 /** Shopfront across [z0, z1]: stall riser, display glazing in frames, a door in one bay. */
@@ -305,7 +304,7 @@ export function shopfront(mb: MeshBuilder, look: Look, z0: number, z1: number, h
       if (!look.night && look.rnd.chance(0.7)) {
         for (let k = 0; k < 3; k++) {
           const zz = za + 0.25 + k * ((zb - za - 0.5) / 2);
-          panelNX(mb, -0.085, 0.9, zz - 0.15, 1.25 + look.rnd.range(0, 0.3), zz + 0.15, { color: look.rnd.pick(P.FLOWERS), jitter: 0.05, top: undefined });
+          panelNX(mb, -0.11, 0.9, zz - 0.15, 1.25 + look.rnd.range(0, 0.3), zz + 0.15, { color: look.rnd.pick(P.FLOWERS), jitter: 0.05, top: undefined });
         }
       }
     }
@@ -378,4 +377,3 @@ export function ribs(mb: MeshBuilder, z0: number, z1: number, y0: number, y1: nu
   for (let z = z0 + step / 2; z < z1 - 0.05; z += step) det(mb, -0.06, y0, z - 0.06, 0, y1, z + 0.06, shadeHex(color, 0.88));
 }
 
-export { PY, NY, NX };

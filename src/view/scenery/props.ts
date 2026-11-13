@@ -270,24 +270,24 @@ function stall(rnd: Rand, night: boolean, food: boolean): MeshBuilder {
   }
   // Poles + striped roof.
   for (const [x, z] of [[-W / 2 + 0.05, -L / 2 + 0.05], [-W / 2 + 0.05, L / 2 - 0.05], [W / 2 - 0.05, -L / 2 + 0.05], [W / 2 - 0.05, L / 2 - 0.05]]) {
-    slab(mb, x - 0.05, 0, z - 0.05, x + 0.05, x < 0 ? 2.3 : 2.6, z + 0.05, 0xd8d0c0, NX | PX | PZ | NZ);
+    slab(mb, x - 0.05, 0, z - 0.05, x + 0.05, x < 0 ? 2.1 : 2.36, z + 0.05, 0xd8d0c0, NX | PX | PZ | NZ);
   }
   const pair = rnd.pick(P.AWNING_PAIRS);
   const n = 6;
   for (let k = 0; k < n; k++) {
     const z0 = -L / 2 - 0.15 + ((L + 0.3) * k) / n, z1 = -L / 2 - 0.15 + ((L + 0.3) * (k + 1)) / n;
     const c = night ? shadeHex(pair[k % 2], 0.8) : pair[k % 2];
-    quadN(mb, [-W / 2 - 0.25, 2.25, z0], [-W / 2 - 0.25, 2.25, z1], [W / 2 + 0.1, 2.7, z1], [W / 2 + 0.1, 2.7, z0], [-0.45, 1.15, 0], c);
-    quadN(mb, [-W / 2 - 0.25, 2.25, z0], [-W / 2 - 0.25, 2.25, z1], [W / 2 + 0.1, 2.7, z1], [W / 2 + 0.1, 2.7, z0], [0.45, -1.15, 0], shadeHex(c, 0.7));
-    quadN(mb, [-W / 2 - 0.25, 2.25, z0], [-W / 2 - 0.25, 2.25, z1], [-W / 2 - 0.25, 2.0, z1], [-W / 2 - 0.25, 2.0, z0], [-1, 0, 0], c);
+    quadN(mb, [-W / 2 - 0.25, 2.05, z0], [-W / 2 - 0.25, 2.05, z1], [W / 2 + 0.1, 2.42, z1], [W / 2 + 0.1, 2.42, z0], [-0.37, 1.15, 0], c);
+    quadN(mb, [-W / 2 - 0.25, 2.05, z0], [-W / 2 - 0.25, 2.05, z1], [W / 2 + 0.1, 2.42, z1], [W / 2 + 0.1, 2.42, z0], [0.37, -1.15, 0], shadeHex(c, 0.7));
+    quadN(mb, [-W / 2 - 0.25, 2.05, z0], [-W / 2 - 0.25, 2.05, z1], [-W / 2 - 0.25, 1.82, z1], [-W / 2 - 0.25, 1.82, z0], [-1, 0, 0], c);
   }
   if (night) {
     // Glowing lamps hanging under the roof + a lit sign board.
     for (const z of [-0.8, 0.0, 0.8]) {
-      bar(mb, [-0.4, 2.35, z], [-0.4, 2.05, z], 0.02, 0x222222);
-      mb.push().translate(-0.4, 1.9, z).sphere(0.16, 0.2, 0.16, 6, 3, glowPaint(rnd.pick(P.LANTERN), 0.95)).pop();
+      bar(mb, [-0.4, 2.15, z], [-0.4, 1.9, z], 0.02, 0x222222);
+      mb.push().translate(-0.4, 1.75, z).sphere(0.16, 0.2, 0.16, 6, 3, glowPaint(rnd.pick(P.LANTERN), 0.95)).pop();
     }
-    slab(mb, -W / 2 - 0.3, 2.32, -0.6, -W / 2 - 0.25, 2.55, 0.6, glowPaint(rnd.pick(P.NEON), 0.35), NX | PX);
+    slab(mb, -W / 2 - 0.3, 2.1, -0.6, -W / 2 - 0.25, 2.32, 0.6, glowPaint(rnd.pick(P.NEON), 0.35), NX | PX);
   }
   return mb;
 }

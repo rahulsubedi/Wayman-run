@@ -159,4 +159,3 @@ export function buildFar(kind: 'town' | 'night' | 'harbor' | 'sea', variant: num
   return mb;
 }
 
-export { bar };
