@@ -1,7 +1,13 @@
-// DOM/CSS overlay (placeholder look, final API): menu, HUD, pause, game over, toast.
+// DOM/CSS overlay: title menu, HUD, pause (with 3-2-1 resume), game over, toasts and popups.
 // The UI never talks to the game directly: it calls the handlers it was given.
+import { POWERUP_DURATION } from '../sim/config';
 import type { Quality, SimState } from '../sim/types';
+import { ICONS, type IconName } from './icons';
+import { loadSettings, saveSettings } from './settings';
 import './ui.css';
+
+export { loadSettings, saveSettings } from './settings';
+export type { Settings } from './settings';
 
 export interface UIHandlers {
   onPlay(): void;
@@ -24,109 +30,354 @@ export interface GameOverInfo {
 export interface UIOptions {
   muted?: boolean;
   quality?: Quality;
+  /** Run a 3-2-1 countdown after pressing Resume before calling onResume (default true). */
+  resumeCountdown?: boolean;
+  /** Called for every UI button press (wire to audio.sfx('click')). */
+  onClick?: () => void;
 }
 
-type Screen = 'menu' | 'hud' | 'pause' | 'gameover';
+export type PopupKind = 'good' | 'great' | 'info';
+
+type Screen = 'menu' | 'hud' | 'pause' | 'gameover' | 'countdown';
+
+const QUALITIES: readonly Quality[] = ['low', 'medium', 'high'];
+const QUALITY_LABEL: Record<Quality, string> = { low: 'Low', medium: 'Med', high: 'High' };
+const CHIP_STEPS = 40;
+const POPUP_POOL = 4;
+const CONFETTI = 36;
+const GAMEOVER_INPUT_LOCK_MS = 650;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
-  e.className = cls;
+  if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+function icon(name: IconName): HTMLSpanElement {
+  const s = el('span', 'wr-ico-wrap');
+  s.innerHTML = ICONS[name];
+  return s;
+}
+
+/** 12345 -> "12,345" (only runs when the value changes). */
+function fmt(n: number): string {
+  const s = String(Math.max(0, Math.floor(n)));
+  if (s.length <= 3) return s;
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 === 0) out += ',';
+    out += s[i];
+  }
+  return out;
+}
+
+interface Chip {
+  root: HTMLElement;
+  bar: HTMLElement | null;
+  q: number;
+  low: boolean;
 }
 
 export class UI {
   private readonly root: HTMLElement;
   private readonly h: UIHandlers;
+  private readonly opts: UIOptions;
   private readonly screens: Record<Screen, HTMLElement>;
-  private readonly scoreEl: HTMLElement;
-  private readonly coinsEl: HTMLElement;
-  private readonly bestEl: HTMLElement;
-  private readonly overScore: HTMLElement;
-  private readonly overCoins: HTMLElement;
-  private readonly overBest: HTMLElement;
+
+  private readonly scoreText: Text;
+  private readonly coinText: Text;
+  private readonly coinPill: HTMLElement;
+  private readonly multEl: HTMLElement;
+  private readonly multText: Text;
+  private readonly chips: Chip[] = [];
+
+  private readonly bestScoreText: Text;
+  private readonly bestCoinsText: Text;
+  private readonly bestRow: HTMLElement;
+
   private readonly overTitle: HTMLElement;
+  private readonly overSub: HTMLElement;
+  private readonly overScoreText: Text;
+  private readonly overCoinsText: Text;
+  private readonly overBestText: Text;
+  private readonly overPanel: HTMLElement;
+  private readonly overBadge: HTMLElement;
+  private readonly confettiEl: HTMLElement;
+  private readonly countNum: HTMLElement;
+
   private readonly toastEl: HTMLElement;
-  private readonly muteBtn: HTMLButtonElement;
-  private readonly qualitySel: HTMLSelectElement;
+  private readonly toastText: Text;
+  private readonly popups: HTMLElement[] = [];
+  private popupIdx = 0;
+
+  private readonly muteBtns: HTMLButtonElement[] = [];
+  private readonly qualityBtns: HTMLButtonElement[] = [];
+
   private muted: boolean;
+  private quality: Quality;
+  private current: Screen | null = null;
+
   private lastScore = -1;
   private lastCoins = -1;
-  private toastTimer = 0;
+  private lastMult = -1;
+  private bumpFlip = false;
+  private toastFlip = false;
+
+  private countTimer = 0;
+  private counting = false;
+  private overShownAt = 0;
+  private countRaf = 0;
+  private readonly reduceMotion: boolean;
 
   constructor(root: HTMLElement, handlers: UIHandlers, options: UIOptions = {}) {
     this.root = root;
     this.h = handlers;
-    this.muted = options.muted ?? false;
+    this.opts = options;
+    const stored = loadSettings();
+    // Stored mute is applied (and reported to the game) below; an explicit mute option wins.
+    this.muted = options.muted === true || stored.muted;
+    this.quality = options.quality ?? stored.quality ?? 'high';
+    this.reduceMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     root.classList.add('wr-ui');
 
-    const btn = (label: string, cls: string, fn: () => void) => {
-      const b = el('button', `wr-btn ${cls}`, label);
+    const button = (children: (string | Node)[], cls: string, fn: () => void, label?: string): HTMLButtonElement => {
+      const b = el('button', `wr-btn ${cls}`);
       b.type = 'button';
+      if (label) b.setAttribute('aria-label', label);
+      b.append(...children);
       b.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (e.detail > 0) b.blur(); // keep Space/Enter free for the game after a mouse/touch click
+        this.opts.onClick?.();
         fn();
       });
       return b;
     };
+    const label = (t: string) => el('span', 'wr-btn-label', t);
 
-    // Menu
+    // ------------------------------------------------------------------ menu
     const menu = el('div', 'wr-screen wr-menu');
-    const title = el('h1', 'wr-title');
-    title.append(el('span', 'wr-title-a', 'WAYMAN'), el('span', 'wr-title-b', 'RUN'));
-    this.bestEl = el('div', 'wr-best');
-    const row = el('div', 'wr-row');
-    this.muteBtn = btn('', 'wr-small', () => this.setMuted(!this.muted));
-    this.qualitySel = el('select', 'wr-select');
-    for (const q of ['low', 'medium', 'high'] as const) {
-      const o = el('option', '', q[0].toUpperCase() + q.slice(1));
-      o.value = q;
-      this.qualitySel.append(o);
+    const logo = el('h1', 'wr-logo');
+    logo.setAttribute('aria-label', 'Wayman Run');
+    const word = (text: string, cls: string): HTMLElement => {
+      const w = el('span', cls);
+      w.setAttribute('aria-hidden', 'true');
+      w.append(el('span', 'wr-lg-edge', text), el('span', 'wr-lg-body', text), el('span', 'wr-lg-front', text));
+      return w;
+    };
+    const lw = word('WAYMAN', 'wr-logo-w');
+    const lrText = word('RUN', 'wr-logo-rt');
+    const lr = el('span', 'wr-logo-r');
+    lr.setAttribute('aria-hidden', 'true');
+    const streaks = el('span', 'wr-logo-streaks');
+    streaks.innerHTML = '<i></i><i></i><i></i>';
+    lr.append(streaks, lrText, icon('parcel'));
+    logo.append(lw, lr);
+    const tag = el('p', 'wr-tag', 'Deliver fast. Do not get caught.');
+
+    const playBtn = button([icon('play'), label('PLAY')], 'wr-primary wr-play', () => this.h.onPlay());
+    this.bestScoreText = document.createTextNode('0');
+    this.bestCoinsText = document.createTextNode('0');
+    this.bestRow = el('div', 'wr-stats-row');
+    const bs = el('div', 'wr-stat');
+    bs.append(icon('star'), el('span', 'wr-stat-k', 'BEST'));
+    const bsv = el('span', 'wr-stat-v');
+    bsv.append(this.bestScoreText);
+    bs.append(bsv);
+    const bc = el('div', 'wr-stat');
+    bc.append(icon('coin'), el('span', 'wr-stat-k', 'COINS'));
+    const bcv = el('span', 'wr-stat-v');
+    bcv.append(this.bestCoinsText);
+    bc.append(bcv);
+    this.bestRow.append(bs, bc);
+
+    const settings = el('div', 'wr-settings');
+    const muteBtn = this.makeMuteButton(button);
+    const seg = el('div', 'wr-seg');
+    seg.setAttribute('role', 'radiogroup');
+    seg.setAttribute('aria-label', 'Graphics quality');
+    for (const q of QUALITIES) {
+      const b = el('button', 'wr-seg-btn', QUALITY_LABEL[q]);
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (e.detail > 0) b.blur();
+        this.opts.onClick?.();
+        this.setQuality(q, true);
+      });
+      this.qualityBtns.push(b);
+      seg.append(b);
     }
-    this.qualitySel.value = options.quality ?? 'high';
-    this.qualitySel.addEventListener('change', () => this.h.onQuality(this.qualitySel.value as Quality));
-    row.append(this.muteBtn, this.qualitySel);
-    menu.append(title, el('div', 'wr-tag', 'Deliver fast. Do not get caught.'), btn('Play', 'wr-primary', () => this.h.onPlay()), this.bestEl, row,
-      el('div', 'wr-help', 'Arrows / WASD / swipe to move  ·  Space = jump  ·  P = pause'));
+    const segWrap = el('div', 'wr-seg-wrap');
+    segWrap.append(el('span', 'wr-seg-label', 'GRAPHICS'), seg);
+    settings.append(muteBtn, segWrap);
 
-    // HUD
+    const howto = el('div', 'wr-howto');
+    howto.append(this.buildHowto());
+
+    const mTop = el('div', 'wr-menu-brand');
+    mTop.append(logo, tag);
+    const mMid = el('div', 'wr-menu-main');
+    mMid.append(playBtn, this.bestRow, settings);
+    menu.append(mTop, mMid, howto);
+
+    // ------------------------------------------------------------------- HUD
     const hud = el('div', 'wr-screen wr-hud');
-    const stats = el('div', 'wr-stats');
-    this.scoreEl = el('div', 'wr-score', '0');
-    this.coinsEl = el('div', 'wr-coins', '0');
-    stats.append(this.scoreEl, this.coinsEl);
-    hud.append(stats, btn('II', 'wr-pause-btn', () => this.h.onPause()));
+    const top = el('div', 'wr-hud-top');
+    this.coinPill = el('div', 'wr-pill wr-coinpill');
+    const coinNum = el('span', 'wr-coin-num');
+    this.coinText = document.createTextNode('0');
+    coinNum.append(this.coinText);
+    this.coinPill.append(icon('coin'), coinNum);
 
-    // Pause
-    const pause = el('div', 'wr-screen wr-panel-screen');
-    const pp = el('div', 'wr-panel');
-    pp.append(el('h2', 'wr-h2', 'Paused'), btn('Resume', 'wr-primary', () => this.h.onResume()), btn('Home', '', () => this.h.onHome()));
+    const scoreBox = el('div', 'wr-scorebox');
+    const scoreNum = el('div', 'wr-score-num');
+    this.scoreText = document.createTextNode('0');
+    scoreNum.append(this.scoreText);
+    this.multEl = el('div', 'wr-mult');
+    this.multText = document.createTextNode('x2');
+    this.multEl.append(this.multText);
+    scoreBox.append(el('div', 'wr-score-k', 'SCORE'), scoreNum, this.multEl);
+
+    const pauseBtn = button([icon('pause')], 'wr-round wr-pausebtn', () => this.h.onPause(), 'Pause');
+    const topL = el('div', 'wr-hud-l');
+    topL.append(this.coinPill);
+    const topR = el('div', 'wr-hud-r');
+    topR.append(pauseBtn);
+    top.append(topL, scoreBox, topR);
+
+    const chipRow = el('div', 'wr-chips');
+    this.chips.push(this.makeChip(chipRow, 'magnet', 'wr-chip-magnet', true));
+    this.chips.push(this.makeChip(chipRow, 'rocket', 'wr-chip-boost', true));
+    this.chips.push(this.makeChip(chipRow, 'x2', 'wr-chip-mult', true));
+    this.chips.push(this.makeChip(chipRow, 'shield', 'wr-chip-shield', false));
+    hud.append(top, chipRow);
+
+    // ----------------------------------------------------------------- pause
+    const pause = el('div', 'wr-screen wr-dim');
+    const pp = el('div', 'wr-panel wr-pause-panel');
+    const ptitle = el('h2', 'wr-h2', 'PAUSED');
+    const prow = el('div', 'wr-btn-row');
+    prow.append(
+      button([icon('restart'), label('Restart')], 'wr-secondary', () => this.h.onRestart()),
+      button([icon('home'), label('Home')], 'wr-secondary', () => this.h.onHome()),
+    );
+    pp.append(
+      ptitle,
+      button([icon('play'), label('RESUME')], 'wr-primary', () => this.resumeWithCountdown()),
+      prow,
+      this.makeMuteButton(button, true),
+    );
     pause.append(pp);
 
-    // Game over
-    const over = el('div', 'wr-screen wr-panel-screen');
-    const op = el('div', 'wr-panel');
-    this.overTitle = el('h2', 'wr-h2', 'Caught!');
-    this.overScore = el('div', 'wr-big');
-    this.overCoins = el('div', 'wr-line');
-    this.overBest = el('div', 'wr-line');
-    op.append(this.overTitle, this.overScore, this.overCoins, this.overBest, btn('Play again', 'wr-primary', () => this.h.onRestart()), btn('Home', '', () => this.h.onHome()));
-    over.append(op);
+    // -------------------------------------------------------------- countdown
+    const count = el('div', 'wr-screen wr-count');
+    this.countNum = el('div', 'wr-count-num', '3');
+    count.append(this.countNum, el('div', 'wr-count-k', 'GET READY'));
 
+    // ------------------------------------------------------------- game over
+    const over = el('div', 'wr-screen wr-dim wr-over');
+    const confetti = el('div', 'wr-confetti');
+    this.confettiEl = confetti;
+    confetti.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < CONFETTI; i++) {
+      const c = el('i', '');
+      const a = (i / CONFETTI) * Math.PI * 2 + Math.random() * 0.5;
+      const dist = 28 + Math.random() * 42;
+      c.style.setProperty('--dx', `${(Math.cos(a) * dist).toFixed(1)}vmin`);
+      c.style.setProperty('--dy', `${(Math.sin(a) * dist * 0.8 - 14).toFixed(1)}vmin`);
+      c.style.setProperty('--rot', `${Math.round(Math.random() * 720 - 360)}deg`);
+      c.style.setProperty('--del', `${(Math.random() * 0.25).toFixed(2)}s`);
+      c.style.setProperty('--c', ['#ffd23f', '#17c3b2', '#ff8a1f', '#fff3d6', '#ff5d4d'][i % 5]);
+      confetti.append(c);
+    }
+    this.overPanel = el('div', 'wr-panel wr-over-panel');
+    this.overTitle = el('h2', 'wr-h2 wr-over-title', 'CRASHED!');
+    this.overSub = el('p', 'wr-over-sub', '');
+    this.overBadge = el('div', 'wr-newbest');
+    this.overBadge.append(icon('star'), el('span', '', 'NEW BEST!'), icon('star'));
+    const scoreK = el('div', 'wr-over-k', 'SCORE');
+    const scoreV = el('div', 'wr-over-score');
+    this.overScoreText = document.createTextNode('0');
+    scoreV.append(this.overScoreText);
+    const stats = el('div', 'wr-over-stats');
+    const s1 = el('div', 'wr-stat wr-stat-lg');
+    s1.append(icon('coin'), el('span', 'wr-stat-k', 'COINS'));
+    const s1v = el('span', 'wr-stat-v');
+    this.overCoinsText = document.createTextNode('0');
+    s1v.append(this.overCoinsText);
+    s1.append(s1v);
+    const s2 = el('div', 'wr-stat wr-stat-lg');
+    s2.append(icon('star'), el('span', 'wr-stat-k', 'BEST'));
+    const s2v = el('span', 'wr-stat-v');
+    this.overBestText = document.createTextNode('0');
+    s2v.append(this.overBestText);
+    s2.append(s2v);
+    stats.append(s1, s2);
+    const orow = el('div', 'wr-btn-row');
+    orow.append(button([icon('home'), label('Home')], 'wr-secondary', () => this.h.onHome()));
+    this.overPanel.append(
+      this.overTitle,
+      this.overSub,
+      this.overBadge,
+      scoreK,
+      scoreV,
+      stats,
+      button([icon('restart'), label('PLAY AGAIN')], 'wr-primary', () => this.h.onRestart()),
+      orow,
+    );
+    over.append(confetti, this.overPanel);
+
+    // ------------------------------------------------------- toast & popups
     this.toastEl = el('div', 'wr-toast');
-    this.screens = { menu, hud, pause, gameover: over };
-    root.append(menu, hud, pause, over, this.toastEl);
+    this.toastText = document.createTextNode('');
+    const toastIn = el('span', 'wr-toast-text');
+    toastIn.append(this.toastText);
+    this.toastEl.append(el('i', 'wr-toast-flag'), toastIn, el('i', 'wr-toast-flag wr-r'));
+    const popLayer = el('div', 'wr-popups');
+    for (let i = 0; i < POPUP_POOL; i++) {
+      const p = el('div', 'wr-popup');
+      this.popups.push(p);
+      popLayer.append(p);
+    }
+
+    this.screens = { menu, hud, pause, gameover: over, countdown: count };
+    root.append(menu, hud, count, pause, over, popLayer, this.toastEl);
     this.renderMute();
+    this.renderQuality();
     this.show(null);
+    window.addEventListener('keydown', this.onKey);
+
+    // Remove the boot splash from index.html, if present.
+    const boot = document.getElementById('wr-boot');
+    if (boot) {
+      boot.classList.add('wr-boot-out');
+      window.setTimeout(() => boot.remove(), 500);
+    }
+
+    // The game may have been constructed unmuted while the player's saved choice is muted.
+    if (this.muted && options.muted !== true) this.h.onMute(true);
   }
 
+  // ------------------------------------------------------------- public API
+
   showMenu(best: { score: number; coins: number }): void {
-    this.bestEl.textContent = best.score > 0 ? `Best ${best.score.toLocaleString()}  ·  ${best.coins} coins` : '';
+    this.bestScoreText.data = fmt(best.score);
+    this.bestCoinsText.data = fmt(best.coins);
+    this.bestRow.classList.toggle('wr-hidden', best.score <= 0 && best.coins <= 0);
     this.show('menu');
   }
 
   showHud(): void {
-    this.lastScore = this.lastCoins = -1;
+    this.lastScore = this.lastCoins = this.lastMult = -1;
+    for (const c of this.chips) {
+      c.q = -1;
+      c.low = false;
+      c.root.classList.remove('wr-on', 'wr-low');
+    }
+    this.multEl.classList.remove('wr-on');
     this.show('hud');
   }
 
@@ -135,44 +386,273 @@ export class UI {
   }
 
   showGameOver(r: GameOverInfo): void {
-    this.overTitle.textContent = r.reason === 'caught' ? 'Caught!' : 'Crash!';
-    this.overScore.textContent = r.score.toLocaleString();
-    this.overCoins.textContent = `${r.coins} coins`;
-    this.overBest.textContent = r.newBest ? 'New best!' : `Best ${r.best.toLocaleString()}`;
+    const caught = r.reason === 'caught';
+    this.overTitle.textContent = caught ? 'CAUGHT!' : r.reason === 'crash' ? 'CRASHED!' : 'RUN OVER';
+    this.overSub.textContent = caught ? 'The Warden got you.' : r.reason === 'crash' ? 'Watch the road, courier!' : '';
+    this.overPanel.classList.toggle('wr-is-best', r.newBest);
+    this.overBadge.classList.toggle('wr-on', r.newBest);
+    this.confettiEl.classList.toggle('wr-on', r.newBest);
+    this.overCoinsText.data = fmt(r.coins);
+    this.overBestText.data = fmt(r.best);
+    this.overShownAt = performance.now();
     this.show('gameover');
+    // restart the entrance animations
+    this.overPanel.classList.remove('wr-enter');
+    void this.overPanel.offsetWidth;
+    this.overPanel.classList.add('wr-enter');
+    this.countUp(r.score);
   }
 
-  /** Cheap to call every frame: only touches the DOM when values change. */
+  /** Cheap to call every frame: only touches the DOM when a displayed value changed. */
   updateHud(s: SimState): void {
     if (s.score !== this.lastScore) {
       this.lastScore = s.score;
-      this.scoreEl.textContent = String(s.score);
+      this.scoreText.data = fmt(s.score);
     }
     if (s.coins !== this.lastCoins) {
+      if (this.lastCoins >= 0 && s.coins > this.lastCoins) {
+        this.bumpFlip = !this.bumpFlip;
+        this.coinPill.classList.remove(this.bumpFlip ? 'wr-bump-b' : 'wr-bump-a');
+        this.coinPill.classList.add(this.bumpFlip ? 'wr-bump-a' : 'wr-bump-b');
+      }
       this.lastCoins = s.coins;
-      this.coinsEl.textContent = String(s.coins);
+      this.coinText.data = String(s.coins);
+    }
+    if (s.multiplier !== this.lastMult) {
+      this.lastMult = s.multiplier;
+      this.multEl.classList.toggle('wr-on', s.multiplier > 1);
+      if (s.multiplier > 1) this.multText.data = `x${s.multiplier}`;
+    }
+    const p = s.powerups;
+    this.setChip(this.chips[0], p.magnet, POWERUP_DURATION.magnet);
+    this.setChip(this.chips[1], p.boost, POWERUP_DURATION.boost);
+    this.setChip(this.chips[2], p.multiplier, POWERUP_DURATION.multiplier);
+    this.setChip(this.chips[3], p.shield, 0);
+  }
+
+  /** Zone-name banner (about 2 s). */
+  toast(text: string): void {
+    this.toastText.data = text;
+    this.toastFlip = !this.toastFlip;
+    this.toastEl.classList.remove('wr-show-a', 'wr-show-b');
+    this.toastEl.classList.add(this.toastFlip ? 'wr-show-a' : 'wr-show-b');
+  }
+
+  /** Short floating popup near the top third of the screen, e.g. popup('Near miss!', 'great'). */
+  popup(text: string, kind: PopupKind = 'good'): void {
+    const p = this.popups[this.popupIdx];
+    this.popupIdx = (this.popupIdx + 1) % this.popups.length;
+    p.textContent = text;
+    p.className = 'wr-popup';
+    void p.offsetWidth; // restart the animation
+    p.className = `wr-popup wr-go wr-pop-${kind}`;
+  }
+
+  /** Reflect a mute state changed elsewhere (does not call onMute). */
+  syncMuted(m: boolean): void {
+    this.muted = m;
+    this.renderMute();
+  }
+
+  get isMuted(): boolean {
+    return this.muted;
+  }
+
+  /** Abort a pending 3-2-1 (the game resumed some other way). */
+  cancelCountdown(): void {
+    window.clearTimeout(this.countTimer);
+    this.counting = false;
+  }
+
+  dispose(): void {
+    this.cancelCountdown();
+    window.removeEventListener('keydown', this.onKey);
+    cancelAnimationFrame(this.countRaf);
+  }
+
+  // --------------------------------------------------------------- internals
+
+  private makeMuteButton(
+    button: (children: (string | Node)[], cls: string, fn: () => void, label?: string) => HTMLButtonElement,
+    wide = false,
+  ): HTMLButtonElement {
+    const b = button([], wide ? 'wr-secondary wr-mute wr-mute-wide' : 'wr-round wr-mute', () => this.toggleMute(), 'Toggle sound');
+    this.muteBtns.push(b);
+    return b;
+  }
+
+  private makeChip(parent: HTMLElement, ic: IconName, cls: string, withBar: boolean): Chip {
+    const root = el('div', `wr-chip ${cls}`);
+    root.append(icon(ic));
+    let bar: HTMLElement | null = null;
+    if (withBar) {
+      const track = el('div', 'wr-chip-bar');
+      bar = el('i', '');
+      track.append(bar);
+      root.append(track);
+    } else {
+      root.append(el('span', 'wr-chip-ready', 'READY'));
+    }
+    parent.append(root);
+    return { root, bar, q: -1, low: false };
+  }
+
+  private setChip(c: Chip, value: number, duration: number): void {
+    if (duration <= 0) {
+      // held indicator (shield): 1 = held
+      const q = value > 0 ? 1 : 0;
+      if (q !== c.q) {
+        c.q = q;
+        c.root.classList.toggle('wr-on', q === 1);
+      }
+      return;
+    }
+    const frac = value > 0 ? Math.min(1, value / duration) : 0;
+    const q = value > 0 ? Math.max(1, Math.ceil(frac * CHIP_STEPS)) : 0;
+    if (q === c.q) return;
+    const wasOn = c.q > 0;
+    c.q = q;
+    if (q > 0 !== wasOn) c.root.classList.toggle('wr-on', q > 0);
+    if (q > 0 && c.bar) c.bar.style.transform = `scaleX(${(q / CHIP_STEPS).toFixed(3)})`;
+    const low = q > 0 && q <= CHIP_STEPS * 0.25;
+    if (low !== c.low) {
+      c.low = low;
+      c.root.classList.toggle('wr-low', low);
     }
   }
 
-  toast(text: string): void {
-    this.toastEl.textContent = text;
-    this.toastEl.classList.add('wr-show');
-    window.clearTimeout(this.toastTimer);
-    this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('wr-show'), 1600);
+  private buildHowto(): DocumentFragment {
+    const f = document.createDocumentFragment();
+    const cap = (t: string, wide = false) => el('kbd', wide ? 'wr-key wr-key-wide' : 'wr-key', t);
+    const item = (keys: HTMLElement[], text: string) => {
+      const d = el('div', 'wr-how');
+      const k = el('span', 'wr-how-keys');
+      k.append(...keys);
+      d.append(k, el('span', 'wr-how-t', text));
+      return d;
+    };
+    const keys = el('div', 'wr-howto-keys');
+    keys.append(
+      item([cap('←'), cap('→')], 'Change lane'),
+      item([cap('↑'), cap('Space', true)], 'Jump'),
+      item([cap('↓')], 'Roll'),
+      item([cap('P', false)], 'Pause'),
+    );
+    const arrow = (dir: 'l' | 'r' | 'u' | 'd') => {
+      const s = icon('arrow');
+      s.classList.add('wr-sw', `wr-sw-${dir}`);
+      return s;
+    };
+    const touch = el('div', 'wr-howto-touch');
+    touch.append(
+      item([arrow('l'), arrow('r')], 'Swipe to change lane'),
+      item([arrow('u')], 'Swipe up to jump'),
+      item([arrow('d')], 'Swipe down to roll'),
+    );
+    f.append(keys, touch);
+    return f;
   }
 
-  private setMuted(m: boolean): void {
-    this.muted = m;
+  private toggleMute(): void {
+    this.muted = !this.muted;
     this.renderMute();
-    this.h.onMute(m);
+    saveSettings({ muted: this.muted });
+    this.h.onMute(this.muted);
   }
 
   private renderMute(): void {
-    this.muteBtn.textContent = this.muted ? 'Sound: off' : 'Sound: on';
+    for (const b of this.muteBtns) {
+      b.innerHTML = '';
+      b.append(icon(this.muted ? 'soundOff' : 'soundOn'));
+      if (b.classList.contains('wr-mute-wide')) b.append(el('span', 'wr-btn-label', this.muted ? 'Sound off' : 'Sound on'));
+      b.classList.toggle('wr-off', this.muted);
+      b.setAttribute('aria-pressed', String(this.muted));
+    }
   }
 
+  private setQuality(q: Quality, notify: boolean): void {
+    this.quality = q;
+    this.renderQuality();
+    if (notify) {
+      saveSettings({ quality: q });
+      this.h.onQuality(q);
+    }
+  }
+
+  private renderQuality(): void {
+    this.qualityBtns.forEach((b, i) => {
+      const on = QUALITIES[i] === this.quality;
+      b.classList.toggle('wr-on', on);
+      b.setAttribute('aria-checked', String(on));
+    });
+  }
+
+  private resumeWithCountdown(): void {
+    if (this.counting) return;
+    if (this.opts.resumeCountdown === false) {
+      this.h.onResume();
+      return;
+    }
+    this.counting = true;
+    this.show('countdown');
+    let n = 3;
+    const step = () => {
+      if (!this.counting) return;
+      if (n === 0) {
+        this.counting = false;
+        this.h.onResume();
+        return;
+      }
+      this.countNum.textContent = String(n);
+      this.countNum.classList.remove('wr-tick');
+      void this.countNum.offsetWidth;
+      this.countNum.classList.add('wr-tick');
+      n--;
+      this.countTimer = window.setTimeout(step, 650);
+    };
+    step();
+  }
+
+  private countUp(target: number): void {
+    cancelAnimationFrame(this.countRaf);
+    if (this.reduceMotion || target <= 0) {
+      this.overScoreText.data = fmt(target);
+      return;
+    }
+    const t0 = performance.now();
+    const dur = Math.min(1400, 600 + target * 0.12);
+    const tick = (now: number) => {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      this.overScoreText.data = fmt(target * e);
+      if (k < 1) this.countRaf = requestAnimationFrame(tick);
+    };
+    this.overScoreText.data = '0';
+    this.countRaf = requestAnimationFrame(tick);
+  }
+
+  private readonly onKey = (e: KeyboardEvent): void => {
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.code !== 'Space' && e.code !== 'Enter' && e.code !== 'NumpadEnter') return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'BUTTON' || t.tagName === 'SELECT' || t.tagName === 'INPUT')) return; // native activation
+    if (this.current === 'menu') {
+      e.preventDefault();
+      this.h.onPlay();
+    } else if (this.current === 'gameover') {
+      e.preventDefault();
+      if (performance.now() - this.overShownAt >= GAMEOVER_INPUT_LOCK_MS) this.h.onRestart();
+    }
+  };
+
   private show(screen: Screen | null): void {
-    for (const [k, e] of Object.entries(this.screens)) e.classList.toggle('wr-visible', k === screen);
+    if (screen !== 'countdown') this.cancelCountdown();
+    if (screen !== 'gameover') cancelAnimationFrame(this.countRaf);
+    this.current = screen;
+    for (const [k, e] of Object.entries(this.screens)) {
+      const vis = k === screen || (screen === 'countdown' && k === 'hud');
+      e.classList.toggle('wr-visible', vis);
+    }
     this.root.dataset.screen = screen ?? '';
   }
 }

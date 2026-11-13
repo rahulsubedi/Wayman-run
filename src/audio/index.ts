@@ -1,29 +1,49 @@
-// WebAudio synth (placeholder sounds, final API). Silent until unlock() is called from a user
-// gesture (browsers block audio before that). No audio files: everything is synthesized.
+// WebAudio engine: synthesized sfx + procedural music, no audio files.
+// Safe to construct and call before unlock() (everything is a no-op until a user gesture creates
+// the context), and safe on browsers without WebAudio.
+import { buildChain, MASTER_LEVEL, MUSIC_LEVEL, type AudioChain } from './chain';
+import { playStep, stepDuration, type MusicStyle } from './music';
+import { playSfx, SFX_LIMITS, SFX_NAMES, type SfxName } from './synth';
 
-export type SfxName =
-  | 'coin'
-  | 'jump'
-  | 'land'
-  | 'roll'
-  | 'lane'
-  | 'crash'
-  | 'stumble'
-  | 'pickup'
-  | 'powerupEnd'
-  | 'shieldBreak'
-  | 'nearMiss'
-  | 'zone'
-  | 'click';
-
+export type { SfxName } from './synth';
 export type MusicMode = 'menu' | 'run' | 'off';
+
+const LOOKAHEAD = 0.25; // seconds of music scheduled ahead
+const TICK_MS = 40;
+const MAX_VOICE_NODES = 64;
+const VOICE_RING = 128;
+/** Sounds that must always play even when the voice budget is exhausted. */
+const PRIORITY: ReadonlySet<SfxName> = new Set<SfxName>(['crash', 'shieldBreak', 'stumble', 'pickup', 'zone']);
 
 export class AudioEngine {
   private ctx: AudioContext | null = null;
-  private master: GainNode | null = null;
+  private chain: AudioChain | null = null;
   private muted = false;
-  private music: MusicMode = 'off';
+  private mode: MusicMode = 'off';
   private intensity = 0;
+
+  // sfx voice limiting
+  private readonly voiceEnd = new Float64Array(VOICE_RING);
+  private readonly voiceCount = new Uint16Array(VOICE_RING);
+  private voiceHead = 0;
+  private readonly lastPlayed = new Map<SfxName, number>();
+  private readonly ends = new Map<SfxName, Float64Array>();
+  private lastCoin = -10;
+  private coinCombo = 0;
+
+  // music scheduler
+  private timer = 0;
+  private nextTime = 0;
+  private readonly steps: Record<MusicStyle, number> = { menu: 0, run: 0 };
+  private style: MusicStyle = 'menu';
+  private smoothIntensity = 0;
+  private hiddenSuspended = false;
+  private musicStarted = false;
+
+  constructor() {
+    for (const n of SFX_NAMES) this.ends.set(n, new Float64Array(SFX_LIMITS[n].max));
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onVisibility);
+  }
 
   get unlocked(): boolean {
     return this.ctx !== null && this.ctx.state === 'running';
@@ -35,89 +55,169 @@ export class AudioEngine {
       if (!this.ctx) {
         const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (!Ctor) return;
-        this.ctx = new Ctor();
-        this.master = this.ctx.createGain();
-        this.master.gain.value = this.muted ? 0 : 0.5;
-        this.master.connect(this.ctx.destination);
+        this.ctx = new Ctor({ latencyHint: 'interactive' });
+        this.chain = buildChain(this.ctx);
+        this.chain.master.gain.value = this.muted ? 0 : this.chain.master.gain.value;
+        this.chain.music.gain.value = 0;
+        this.ctx.onstatechange = () => {
+          if (this.ctx?.state === 'running') this.applyMode(true);
+        };
       }
-      if (this.ctx.state === 'suspended') void this.ctx.resume();
+      if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined);
+      this.applyMode(false);
     } catch {
       this.ctx = null;
+      this.chain = null;
     }
   }
 
+  /** Plays a one-shot effect. Voice-limited so bursts (20 coins) cannot pile up or clip. */
   sfx(name: SfxName): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || this.muted || ctx.state !== 'running') return;
-    const t = ctx.currentTime;
-    switch (name) {
-      case 'coin':
-        this.blip(t, 'square', 988, 1319, 0.09, 0.12);
+    const chain = this.chain;
+    if (!ctx || !chain || this.muted || ctx.state !== 'running') return;
+    const now = ctx.currentTime;
+    const lim = SFX_LIMITS[name];
+
+    const last = this.lastPlayed.get(name);
+    if (last !== undefined && now - last < lim.gap) return;
+    const ends = this.ends.get(name)!;
+    let slot = -1;
+    for (let i = 0; i < ends.length; i++) {
+      if (ends[i] <= now) {
+        slot = i;
         break;
-      case 'jump':
-        this.blip(t, 'triangle', 300, 620, 0.16, 0.25);
-        break;
-      case 'crash':
-        this.noise(t, 0.45, 0.5);
-        this.blip(t, 'sawtooth', 160, 40, 0.4, 0.3);
-        break;
-      case 'pickup':
-        this.blip(t, 'square', 523, 1047, 0.25, 0.15);
-        break;
-      case 'land':
-      case 'roll':
-      case 'lane':
-        this.blip(t, 'sine', 220, 160, 0.06, 0.12);
-        break;
-      default:
-        this.blip(t, 'sine', 440, 440, 0.05, 0.08);
+      }
     }
+    if (slot < 0) return;
+    if (!PRIORITY.has(name) && this.activeNodes(now) > MAX_VOICE_NODES) return;
+
+    let step = 0;
+    if (name === 'coin') {
+      this.coinCombo = now - this.lastCoin < 0.5 ? Math.min(this.coinCombo + 1, 10) : 0;
+      this.lastCoin = now;
+      step = this.coinCombo;
+    }
+
+    this.lastPlayed.set(name, now);
+    const info = playSfx(ctx, chain.sfx, now + 0.005, name, { step });
+    ends[slot] = now + info.duration;
+    const h = this.voiceHead;
+    this.voiceEnd[h] = now + info.duration;
+    this.voiceCount[h] = info.voices;
+    this.voiceHead = (h + 1) % VOICE_RING;
   }
 
-  /** Placeholder: remembers the mode; music is synthesized by the audio engineer later. */
   setMusic(mode: MusicMode): void {
-    this.music = mode;
+    if (mode === this.mode) return;
+    const prev = this.mode;
+    this.mode = mode;
+    if (mode !== 'off') {
+      const style: MusicStyle = mode;
+      // Returning from silence (pause/resume) continues where we were; a style change restarts.
+      if (prev !== 'off' && style !== this.style) this.steps[style] = 0;
+      if (prev === 'menu' && mode === 'run') this.steps.run = 0;
+      this.style = style;
+      this.musicStarted = false;
+    }
+    this.applyMode(false);
   }
 
   /** 0..1 run intensity (speed / danger) for adaptive music. */
   setIntensity(v: number): void {
-    this.intensity = Math.max(0, Math.min(1, v));
+    this.intensity = Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
   }
 
   setMuted(m: boolean): void {
     this.muted = m;
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.5, this.ctx.currentTime, 0.02);
+    const ctx = this.ctx;
+    if (this.chain && ctx) this.chain.master.gain.setTargetAtTime(m ? 0 : MASTER_LEVEL, ctx.currentTime, 0.03);
   }
 
   get state(): { muted: boolean; music: MusicMode; intensity: number } {
-    return { muted: this.muted, music: this.music, intensity: this.intensity };
+    return { muted: this.muted, music: this.mode, intensity: this.intensity };
   }
 
-  private blip(t: number, type: OscillatorType, f0: number, f1: number, dur: number, vol: number): void {
-    const ctx = this.ctx!;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(f0, t);
-    o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(this.master!);
-    o.start(t);
-    o.stop(t + dur + 0.02);
+  dispose(): void {
+    this.stopTimer();
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onVisibility);
+    void this.ctx?.close().catch(() => undefined);
+    this.ctx = null;
+    this.chain = null;
   }
 
-  private noise(t: number, dur: number, vol: number): void {
-    const ctx = this.ctx!;
-    const len = Math.floor(ctx.sampleRate * dur);
-    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    const g = ctx.createGain();
-    g.gain.value = vol;
-    src.connect(g).connect(this.master!);
-    src.start(t);
+  // ----------------------------------------------------------------- internals
+
+  private activeNodes(now: number): number {
+    let n = 0;
+    for (let i = 0; i < VOICE_RING; i++) if (this.voiceEnd[i] > now) n += this.voiceCount[i];
+    return n;
   }
+
+  private readonly onVisibility = (): void => {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (document.hidden) {
+      if (ctx.state === 'running') {
+        this.hiddenSuspended = true;
+        void ctx.suspend().catch(() => undefined);
+      }
+    } else if (this.hiddenSuspended || ctx.state === 'suspended' || (ctx.state as string) === 'interrupted') {
+      this.hiddenSuspended = false;
+      void ctx.resume().catch(() => undefined);
+    }
+  };
+
+  /** Starts / retargets / stops the music scheduler to match `mode`. */
+  private applyMode(fromStateChange: boolean): void {
+    const ctx = this.ctx;
+    const chain = this.chain;
+    if (!ctx || !chain) return;
+    const g = chain.music.gain;
+    const now = ctx.currentTime;
+    if (this.mode === 'off') {
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(0, now, 0.07);
+      window.setTimeout(() => {
+        if (this.mode === 'off') this.stopTimer();
+      }, 600);
+      return;
+    }
+    if (!this.musicStarted || fromStateChange) {
+      // (Re)start: brief dip, then fade in on the downbeat of the current position.
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(0, now, 0.03);
+      g.setValueAtTime(0, now + 0.12);
+      g.linearRampToValueAtTime(MUSIC_LEVEL, now + 0.55);
+      this.nextTime = now + 0.12;
+      this.musicStarted = true;
+    } else {
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(MUSIC_LEVEL, now, 0.12);
+    }
+    if (!this.timer) this.timer = window.setInterval(this.tick, TICK_MS);
+  }
+
+  private stopTimer(): void {
+    if (this.timer) window.clearInterval(this.timer);
+    this.timer = 0;
+  }
+
+  private readonly tick = (): void => {
+    const ctx = this.ctx;
+    const chain = this.chain;
+    if (!ctx || !chain || ctx.state !== 'running' || this.mode === 'off') return;
+    const now = ctx.currentTime;
+    if (this.nextTime < now) this.nextTime = now + 0.03; // fell behind (tab stall): resync
+    this.smoothIntensity += (this.intensity - this.smoothIntensity) * 0.08;
+    const style = this.style;
+    const horizon = now + LOOKAHEAD;
+    let guard = 0;
+    while (this.nextTime < horizon && guard++ < 16) {
+      const sd = stepDuration(style, this.smoothIntensity);
+      if (!this.muted) playStep(ctx, chain.musicOut, style, this.steps[style], this.nextTime, sd, this.smoothIntensity);
+      this.steps[style]++;
+      this.nextTime += sd;
+    }
+  };
 }

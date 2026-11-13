@@ -3,18 +3,32 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#1b2a3a" />
+    <meta name="theme-color" content="#0f1d36" />
+    <meta name="description" content="Wayman Run: a three-lane endless runner through the sun-washed streets of Port Solana." />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <title>Wayman Run</title>
     <style>
-      html, body { margin: 0; height: 100%; overflow: hidden; background: #1b2a3a; touch-action: none; overscroll-behavior: none; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1d36; touch-action: none; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
       #game { position: fixed; inset: 0; }
-      #game canvas { display: block; }
-      #ui { position: fixed; inset: 0; pointer-events: none; }
+      #game canvas { display: block; touch-action: none; }
+      #ui { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+      /* boot splash, removed by the UI once the game is up */
+      #wr-boot { position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: radial-gradient(ellipse at 50% 40%, #1d3f73, #0f1d36 70%); color: #fff3d6; font: 900 italic 40px/1 'Arial Black', system-ui, sans-serif; letter-spacing: 0.04em; transition: opacity 0.45s; pointer-events: none; }
+      #wr-boot span { color: #ff8a1f; }
+      #wr-boot i { display: block; width: 120px; height: 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.18); overflow: hidden; }
+      #wr-boot i::after { content: ''; display: block; width: 40%; height: 100%; border-radius: 8px; background: #17c3b2; animation: wr-load 1s ease-in-out infinite alternate; }
+      #wr-boot.wr-boot-out { opacity: 0; }
+      @keyframes wr-load { from { transform: translateX(-10%); } to { transform: translateX(160%); } }
     </style>
   </head>
   <body>
     <div id="game"></div>
     <div id="ui"></div>
+    <div id="wr-boot" role="status" aria-label="Loading"><div>WAYMAN <span>RUN</span></div><i></i></div>
+    <noscript>Wayman Run needs JavaScript.</noscript>
     <script type="module" src="./src/main.ts"></script>
   </body>
 </html>
