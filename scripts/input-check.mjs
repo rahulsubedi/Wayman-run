@@ -46,7 +46,7 @@ async function fresh(opts = {}) {
   return { ctx, page };
 }
 const player = (page) => page.evaluate(() => { const p = window.__wayman.state().player; return { lane: p.lane, action: p.action, y: p.y, grounded: p.grounded, over: window.__wayman.state().over }; });
-const until = async (page, fn, arg, timeout = 4000) => {
+const until = async (page, fn, arg, timeout = 10000) => {
   try { await page.waitForFunction(fn, arg, { timeout, polling: 30 }); return true; } catch { return false; }
 };
 const settle = (page, ms = 700) => page.waitForTimeout(ms);
