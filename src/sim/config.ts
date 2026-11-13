@@ -124,3 +124,78 @@ export const ZONE_BLEND_LENGTH = 80;
 // ---- Simulation ----
 /** Largest step GameSim.update should be called with. */
 export const MAX_SIM_STEP = 1 / 120;
+
+// =====================================================================================
+// Gameplay tuning added by the full simulation (additive; the names above are unchanged).
+// =====================================================================================
+
+/** Exact distance run after `t` seconds (closed-form integral of speedAt). */
+export function distanceAt(t: number): number {
+  return SPEED_MAX * t - (SPEED_MAX - SPEED_START) * SPEED_TAU * (1 - Math.exp(-t / SPEED_TAU));
+}
+
+/** Inverse of distanceAt: run seconds at which the player reaches distance `s`. */
+export function timeAtDistance(s: number): number {
+  if (s <= 0) return 0;
+  let t = s / ((SPEED_START + SPEED_MAX) / 2);
+  for (let i = 0; i < 8; i++) t -= (distanceAt(t) - s) / speedAt(t);
+  return Math.max(0, t);
+}
+
+/** Speed (m/s) the player will have when reaching distance `s`. */
+export function speedAtDistance(s: number): number {
+  return speedAt(timeAtDistance(s));
+}
+
+// ---- Player controller ----
+/** A jump pressed this long before landing still fires on landing (s). */
+export const JUMP_BUFFER = 0.12;
+/** A jump pressed this long after walking off a roof edge still works (s). */
+export const COYOTE_TIME = 0.1;
+/** A lane press made while a side-hit bounce is playing is replayed afterwards within this time (s). */
+export const LANE_BUFFER = 0.15;
+/** Surfaces up to this much above the feet are stepped onto instead of collided with (m). */
+export const STEP_UP = 0.4;
+/** A landing after falling at least this far counts as hard (m). */
+export const HARD_LAND_DROP = 2.5;
+/** Height of the feet above a hurdle top after a low clip: the player is bumped over it (m/s up). */
+export const CLIP_BOUNCE_VY = 4.5;
+
+// ---- Power-ups ----
+/** Invulnerability after a shield absorbs a crash (s). */
+export const SHIELD_INVULN = 1.0;
+/** Boost: rate of the exponential climb toward BOOST_Y (1/s). */
+export const BOOST_RISE_RATE = 6;
+/** Boost: constant vertical speed of the controlled descent (m/s). */
+export const BOOST_DESCENT_VY = -8;
+/** Magnet: homing speed of attracted coins relative to the player (m/s). */
+export const MAGNET_PULL_SPEED = 26;
+/** Power-ups appear every POWERUP_GAP_MIN..POWERUP_GAP_MAX metres. */
+export const POWERUP_GAP_MIN = 150;
+export const POWERUP_GAP_MAX = 250;
+
+// ---- Hits / feedback ----
+/** Lateral clearance (m) under which passing a solid obstacle counts as a near miss. */
+export const NEAR_MISS_LATERAL = 0.55;
+/** Clearance (m) over a hurdle under which a jump counts as a near miss. */
+export const NEAR_MISS_VERTICAL = 0.3;
+/** Score bonus for a near miss (before the multiplier). */
+export const NEAR_MISS_BONUS = 25;
+
+// ---- Chaser ----
+/** Chaser gap while the player staggers, and while the 6 s stumble window is open (m). */
+export const CHASER_STUMBLE_GAP = 1.8;
+export const CHASER_WARN_GAP = 3.6;
+/** How long the chaser stays close at the very start of a run (s). */
+export const CHASER_INTRO_TIME = 1.6;
+/** Chaser closing / receding speeds (m/s). */
+export const CHASER_CLOSE_SPEED = 12;
+/** On a stumble the chaser jumps to at most this gap (just out of shot) and then closes in (m). */
+export const CHASER_SWOOP_GAP = 9;
+export const CHASER_DRIFT_SPEED = 7;
+
+// ---- Track generation ----
+/** Difficulty tiers start at these distances (m): 0 intro, 1 easy, 2 medium, 3 hard, 4 expert. */
+export const TIER_DISTANCES: readonly number[] = [0, 300, 700, 1400, 2400];
+/** Max gap between consecutive vehicles of one roof chain (m): small enough to run across. */
+export const CHAIN_MAX_GAP = 1.2;

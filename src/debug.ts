@@ -4,8 +4,8 @@
 //             renderer=webgl|webgpu (default: WebGPU when supported, else WebGL2)
 // window.__wayman = { ready, state(), start(), advance(seconds), setAutopilot(on), errors }
 import type { Game } from './game';
-import { LANES, OBSTACLE_DIMS } from './sim/config';
-import type { Entity, InputActions, Lane, ObstacleKind, Quality, SimState } from './sim/types';
+import { autopilot } from './sim/autopilot';
+import type { Quality, SimState } from './sim/types';
 import type { BackendPreference } from './view/stage';
 
 export interface DebugParams {
@@ -102,62 +102,5 @@ export function installDebugHook(): { hook: WaymanHook; attach(game: Game, param
 
 // ------------------------------------------------------------------ autopilot
 
-const BLOCKING: ReadonlySet<ObstacleKind> = new Set(['blocker', 'truck', 'bus', 'busOncoming']);
-const out: InputActions = { left: false, right: false, jump: false, roll: false };
-
-function isObstacleEntity(e: Entity): e is Entity & { kind: ObstacleKind } {
-  return e.kind in OBSTACLE_DIMS;
-}
-
-/** Simple bot: dodges blockers by lane, jumps hurdles, rolls under gantries, drifts toward coins. */
-export function autopilot(state: SimState): InputActions {
-  out.left = out.right = out.jump = out.roll = false;
-  const p = state.player;
-  const v = Math.max(1, p.speed);
-  const front = p.s + 0.3;
-  const look = v * 1.4 + 8;
-
-  // Distance to the nearest blocking obstacle per lane (Infinity = clear), and nearest passable one.
-  const block: Record<Lane, number> = { [-1]: Infinity, 0: Infinity, 1: Infinity };
-  let near: { kind: ObstacleKind; d: number } | null = null;
-  const coinLane: Record<Lane, number> = { [-1]: Infinity, 0: Infinity, 1: Infinity };
-  for (const e of state.entities) {
-    if (!e.active) continue;
-    const d = e.s - e.len / 2 - front; // gap to its near edge
-    const far = e.s + e.len / 2 - (p.s - 0.3);
-    if (far < -0.2 || d > look) continue;
-    if (isObstacleEntity(e)) {
-      if (BLOCKING.has(e.kind)) block[e.lane] = Math.min(block[e.lane], d);
-      else if (e.lane === p.lane && d > -0.6 && (!near || d < near.d)) near = { kind: e.kind, d };
-    } else if (e.kind === 'coin' && d > 0) {
-      coinLane[e.lane] = Math.min(coinLane[e.lane], d);
-    }
-  }
-
-  // Lane choice: go toward the lane whose next blocker is furthest (ties: stay / nearer lane).
-  let best: Lane = p.lane;
-  for (const l of LANES) {
-    const better = block[l] > block[best] + 0.5 || (block[l] === block[best] && Math.abs(l - p.lane) < Math.abs(best - p.lane));
-    if (better) best = l;
-  }
-  const danger = block[p.lane] / v < 1.2;
-  if (!danger && block[p.lane] === Infinity) {
-    // Drift toward coins in a fully clear neighbouring lane.
-    for (const l of LANES) {
-      if (Math.abs(l - p.lane) === 1 && block[l] === Infinity && coinLane[l] < 25 && coinLane[l] < coinLane[p.lane]) best = l;
-    }
-  } else if (!danger) {
-    best = p.lane;
-  }
-  if (best !== p.lane) {
-    if (best < p.lane) out.left = true;
-    else out.right = true;
-  }
-
-  if (near) {
-    const t = near.d / v;
-    if (near.kind === 'hurdle' && p.grounded && t < 0.28 && t > 0.06) out.jump = true;
-    if (near.kind === 'overhead' && p.action !== 'roll' && t < 0.3) out.roll = true;
-  }
-  return out;
-}
+/** The bot lives in the pure sim module (src/sim/autopilot.ts); re-exported for existing importers. */
+export { autopilot };
