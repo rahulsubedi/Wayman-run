@@ -18,6 +18,12 @@ export interface Entity {
   y: number;
   len: number;
   active: boolean;
+  /** Own velocity along s in m/s (negative = driving toward the player, e.g. busOncoming). Always set by the sim. */
+  vs?: number;
+  /** Deterministic integer 0..7 for visual variety (paint colour, sign text ...). Always set by the sim. */
+  variant?: number;
+  /** True while a coin is being pulled by the magnet (its x/y/s move toward the player). */
+  magnet?: boolean;
 }
 
 export type PlayerAction = 'run' | 'jump' | 'fall' | 'roll' | 'fly' | 'stumble' | 'dead';
@@ -38,6 +44,16 @@ export interface PlayerState {
   lean: number;
   /** Radians, advances with distance, drives the run cycle. */
   runPhase: number;
+  /** Height of the surface under the player (0 = road, ROOF_Y on a roof, in between on a ramp). */
+  groundY?: number;
+  /** Seconds of invulnerability left (shield hit, boost descent + landing grace). Blink while > 0. */
+  invulnerable?: number;
+  /** Seconds left in which another stumble means game over ('caught'). 0 = safe. */
+  stumbleWindow?: number;
+  /** True while diving (roll pressed in the air). */
+  fastFall?: boolean;
+  /** Lane the player is moving away from (equals `lane` when not changing lanes). */
+  laneFrom?: Lane;
 }
 
 /** `gap` = metres behind the player. */
@@ -61,6 +77,23 @@ export interface SimState {
   /** 0..1 blend toward the next zone. */
   zoneBlend: number;
   over: boolean;
+  /** Metres run (same as player.s). */
+  distance?: number;
+  /** Current difficulty tier 0..4 of the generator at the player's position. */
+  tier?: number;
+  /** Per-run counters for the game-over screen. */
+  stats?: RunStats;
+}
+
+export interface RunStats {
+  jumps: number;
+  rolls: number;
+  laneChanges: number;
+  nearMisses: number;
+  stumbles: number;
+  powerups: number;
+  shieldSaves: number;
+  roofMetres: number;
 }
 
 /** Edge-triggered: true only for the frame on which the action was requested. */
