@@ -1,145 +1,288 @@
-// SceneryView (placeholder art, final API): road, lane markings, sidewalks and simple buildings,
-// built in fixed-length chunks that recycle ahead of the player.
+// SceneryView: the static street of Port Solana (ground, facades, furniture, overhead strings,
+// gateways, back rows and far hills), assembled from a pre-built module library and recycled in
+// CHUNK_LEN chunks ahead of the player.
 //
-// Chunks are positioned once (when recycled) with stage.worldZ() and shifted on origin re-base
-// through stage.onRebase(): that is the pattern for any node placed once rather than per frame.
-import { Container3D, Mesh3D } from '@pixi/3d';
-import type { Geometry3D } from '@pixi/3d';
-import { LANE_WIDTH, ROAD_HALF_WIDTH, SIDEWALK_OUTER } from '../../sim/config';
-import { hash01 } from '../../sim/rng';
-import { shadeHex as shade } from '../geom/color';
-import { MeshBuilder } from '../geom/meshBuilder';
-import { vertexColorMaterial } from '../geom/materials';
+// - Construction builds every module geometry once (library.ts) and pre-allocates a pool of
+//   Mesh3D nodes per chunk. During play a chunk is (re)placed by assigning shared geometries to
+//   pooled meshes: no geometry is ever built after start-up, and meshes sharing a geometry and
+//   the one scenery material are auto-instanced by the engine (one draw per module kind).
+// - A chunk's content depends only on its index and the zone at its own start s (plus the debug
+//   zone offset), so the next zone is already visible ahead and layout is deterministic.
+// - Chunk nodes are placed once with stage.worldZ() and shifted on origin re-base.
+import { Container3D, CubeGeometry, Mesh3D } from '@pixi/3d';
+import type { Geometry3D, Material3D } from '@pixi/3d';
+import { ZONE_COUNT, ZONE_LENGTH } from '../../sim/config';
 import type { Stage } from '../stage';
+import { chunkZone, layoutChunk, type AnimKind, type WidthTable } from './layout';
+import { CHUNK_LEN } from './layoutConst';
+import type { Box } from './buildings';
+import { lowTable, moduleDefs, shadowTable, widthTable } from './library';
+import { sceneryMaterial, waterMaterial } from './material';
 
-const CHUNK_LEN = 40;
-const CHUNKS_BEHIND = 1;
-const CHUNK_COUNT = 7; // 1 behind + 6 ahead = 240 m of street
-const LOTS_PER_SIDE = 4; // building slots per side per chunk (10 m each)
-const BUILDING_VARIANTS = 8;
+/**
+ * A chunk retires once its far end is this far behind the player (the camera is ~7 m behind;
+ * tall buildings further back still throw low golden-hour shadows forward onto the street).
+ */
+const BEHIND = 40;
+/** Pool size: covers BEHIND + at least ~310 m ahead (far fog ends around 240 m). */
+const CHUNK_COUNT = 8;
+/**
+ * Small clutter (bins, bollards, scooters...) is shown in chunks that start less than this far
+ * ahead. Beyond it those props are a few pixels tall inside thick fog; hiding them there keeps
+ * the next zone's clutter kinds from adding draw calls while it is still on the horizon.
+ */
+const DETAIL_AHEAD = 150;
 
-const WALLS = [0xe8c9a0, 0xd9825b, 0xf1e4cc, 0xc96f4a, 0xe3b26a, 0xf4efe6, 0xd6a77a, 0xb8d4cf];
-const TRIMS = [0x2a9d8f, 0xe76f51, 0xe9c46a, 0xffffff, 0x264653];
-
-function roadGeometry(): Geometry3D {
-  const mb = new MeshBuilder({ seed: 21, jitter: 0.02 });
-  const L = CHUNK_LEN;
-  // Chunk spans local z from 0 (near) to -L (far).
-  mb.block(-ROAD_HALF_WIDTH, -0.1, -L, ROAD_HALF_WIDTH, 0, 0, 0x55606e);
-  // Lane dashes between lanes.
-  for (const x of [-LANE_WIDTH / 2, LANE_WIDTH / 2]) {
-    for (let z = 0; z < L; z += 5) mb.block(x - 0.07, 0, -z - 3, x + 0.07, 0.012, -z, 0xf2efe6);
-  }
-  // Edge lines.
-  for (const x of [-ROAD_HALF_WIDTH + 0.25, ROAD_HALF_WIDTH - 0.25]) mb.block(x - 0.06, 0, -L, x + 0.06, 0.012, 0, 0xf0d36a);
-  // Kerbs + sidewalks.
-  for (const side of [-1, 1]) {
-    const x0 = side * ROAD_HALF_WIDTH, x1 = side * SIDEWALK_OUTER;
-    mb.block(Math.min(x0, x0 + side * 0.25), 0, -L, Math.max(x0, x0 + side * 0.25), 0.18, 0, 0xc9c3b6);
-    for (let z = 0; z < L; z += 2.5) {
-      const shade = (z / 2.5) % 2 ? 0xd8cdb8 : 0xcfc2aa;
-      mb.block(Math.min(x0 + side * 0.25, x1), 0, -z - 2.5, Math.max(x0 + side * 0.25, x1), 0.15, -z, shade);
-    }
-    // Ground beyond the lots.
-    mb.block(Math.min(side * 30, side * 60), -0.2, -L, Math.max(side * 30, side * 60), -0.05, 0, 0x8a7a62);
-  }
-  return mb.build();
+interface Module {
+  geometry: Geometry3D;
+  material: Material3D;
+  shadow: boolean;
+  small: boolean;
+  triangles: number;
 }
 
-/** A building on a 10 m lot, street face at local x = 0 facing -X (right side; `side = -1` mirrors it for the left). */
-function buildingGeometry(variant: number, side: 1 | -1): Geometry3D {
-  const r = (k: number) => hash01(variant, k);
-  const mb = new MeshBuilder({ seed: 100 + variant, jitter: 0.03 });
-  mb.scale(side, 1, 1); // left-side copies are mirrored at build time (keeps winding/normals right)
-  const wall = WALLS[variant % WALLS.length];
-  const trim = TRIMS[Math.floor(r(1) * TRIMS.length)];
-  const floors = 2 + Math.floor(r(2) * 3);
-  const h = floors * 3.2;
-  const depth = 8 + r(3) * 6;
-  const w = 9.4;
-  mb.block(0, 0, -w / 2, depth, h, w / 2, { color: wall, bottom: shade(wall, 0.8) });
-  mb.block(-0.15, h, -w / 2 - 0.15, depth + 0.15, h + 0.35, w / 2 + 0.15, trim); // cornice
-  // Windows and a door on the street face (x = 0).
-  for (let f = 0; f < floors; f++) {
-    for (let i = 0; i < 3; i++) {
-      const z = -w / 2 + 1.7 + i * 3;
-      if (f === 0 && i === 1) {
-        mb.block(-0.06, 0, z - 0.7, 0.02, 2.4, z + 0.7, 0x5a3b28); // door
-        continue;
-      }
-      mb.block(-0.06, f * 3.2 + 1.1, z - 0.6, 0.02, f * 3.2 + 2.5, z + 0.6, 0x2b4152);
-      mb.block(-0.2, f * 3.2 + 1.0, z - 0.75, 0.02, f * 3.2 + 1.1, z + 0.75, 0xf4efe6); // sill
-    }
-  }
-  // Awning on some.
-  if (r(4) > 0.4) {
-    const a = TRIMS[Math.floor(r(5) * TRIMS.length)];
-    mb.push().translate(-0.8, 2.9, 0).rotateZ(-0.35).block(-0.9, -0.05, -w / 2 + 0.5, 0.9, 0.05, w / 2 - 0.5, a).pop();
-  }
-  return mb.build();
+interface AnimSlot {
+  mesh: Mesh3D;
+  kind: AnimKind;
+  phase: number;
+  baseY: number;
 }
 
 interface Chunk {
   node: Container3D;
   index: number;
-  lots: Mesh3D[];
+  zone: number;
+  statics: Mesh3D[];
+  /** Shadow-only unit boxes standing in for the detailed buildings in the shadow pass. */
+  proxies: Mesh3D[];
+  proxyCount: number;
+  /** Which static slots hold small clutter (toggled by distance). */
+  small: boolean[];
+  staticCount: number;
+  detail: boolean;
+  anims: AnimSlot[];
+  animCount: number;
 }
 
 export class SceneryView {
+  /** Root of all scenery nodes (visible for perf probes). */
+  readonly root = new Container3D({ label: 'scenery' });
   private readonly stage: Stage;
-  private readonly root = new Container3D({ label: 'scenery' });
+  private readonly modules = new Map<string, Module>();
+  private readonly widths: WidthTable;
+  private readonly low: boolean[][];
+  private readonly shadows: Map<string, Box[]>;
   private readonly chunks: Chunk[] = [];
-  private readonly buildings: Record<1 | -1, Geometry3D[]> = { 1: [], [-1]: [] };
+  private zoneOffset = 0;
   private lastS = 0;
+  private time = 0;
 
   constructor(stage: Stage) {
     this.stage = stage;
     stage.world.addChild(this.root);
-    const road = roadGeometry();
-    for (let v = 0; v < BUILDING_VARIANTS; v++) {
-      this.buildings[1].push(buildingGeometry(v, 1));
-      this.buildings[-1].push(buildingGeometry(v, -1));
+    this.widths = widthTable();
+    this.low = lowTable();
+    this.shadows = shadowTable();
+
+    // ---- Build the module library (the only geometry building we ever do).
+    const main = sceneryMaterial();
+    const water = waterMaterial();
+    for (const [key, def] of moduleDefs()) {
+      const mb = def.build();
+      this.modules.set(key, { geometry: mb.build(), material: def.material === 'water' ? water : main, shadow: def.shadow, small: !!def.small, triangles: mb.triangleCount });
     }
-    const mat = vertexColorMaterial();
-    for (let c = 0; c < CHUNK_COUNT; c++) {
-      const node = new Container3D({ parent: this.root });
-      new Mesh3D({ parent: node, geometry: road, material: mat, castShadow: false });
-      const lots: Mesh3D[] = [];
-      for (const side of [-1, 1] as const) {
-        for (let i = 0; i < LOTS_PER_SIDE; i++) {
-          const m = new Mesh3D({ parent: node, geometry: this.buildings[side][0], material: mat });
-          m.position.set(side * (SIDEWALK_OUTER + 0.3), 0, -(i + 0.5) * (CHUNK_LEN / LOTS_PER_SIDE));
-          lots.push(m);
-        }
+
+    // ---- Size the per-chunk pools from a sweep of layouts across all zones.
+    let maxStatic = 0, maxAnim = 0;
+    for (let z = 0; z < ZONE_COUNT; z++) {
+      for (let i = 0; i < 40; i++) {
+        const l = layoutChunk(i, z, this.widths, this.low);
+        maxStatic = Math.max(maxStatic, l.items.length);
+        maxAnim = Math.max(maxAnim, l.anim.length);
       }
-      this.chunks.push({ node, index: -1, lots });
     }
+    maxStatic += 12;
+    maxAnim += 2;
+    const anyGeo = this.modules.values().next().value!.geometry;
+    for (let c = 0; c < CHUNK_COUNT; c++) {
+      const node = new Container3D({ label: `chunk${c}`, parent: this.root });
+      const statics: Mesh3D[] = [];
+      for (let i = 0; i < maxStatic; i++) statics.push(new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }));
+      const anims: AnimSlot[] = [];
+      for (let i = 0; i < maxAnim; i++) {
+        anims.push({ mesh: new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }), kind: 'swing', phase: 0, baseY: 0 });
+      }
+      this.chunks.push({ node, index: Number.NaN, zone: -1, statics, proxies: [], proxyCount: 0, small: statics.map(() => false), staticCount: 0, detail: true, anims, animCount: 0 });
+    }
+
     stage.onRebase((dz) => {
       for (const ch of this.chunks) ch.node.position.z += dz;
     });
-    this.layout(0);
-  }
 
-  update(playerS: number, _zone: number, _zoneBlend: number, _dt: number): void {
-    if (playerS < this.lastS - 1) this.layout(playerS); // new run: rebuild from scratch
-    this.lastS = playerS;
-    const first = Math.floor(playerS / CHUNK_LEN) - CHUNKS_BEHIND;
+    this.prewarm();
+
+    // Shadow proxies: one shared unit cube, drawn only in the shadow pass (created after the
+    // warm-up render so the 'opaque' pass name is registered for disablePass).
+    const unit = new CubeGeometry({ width: 1, height: 1, depth: 1 });
     for (const ch of this.chunks) {
-      if (ch.index < first) this.place(ch, ch.index + CHUNK_COUNT * Math.ceil((first - ch.index) / CHUNK_COUNT));
+      for (let i = 0; i < 40; i++) {
+        const p = new Mesh3D({ parent: ch.node, geometry: unit, material: main, visible: false, castShadow: true, receiveShadow: false });
+        p.disablePass('opaque');
+        ch.proxies.push(p);
+      }
     }
+    this.relayout(0);
   }
 
-  private layout(playerS: number): void {
-    const first = Math.floor(playerS / CHUNK_LEN) - CHUNKS_BEHIND;
-    this.chunks.forEach((ch, i) => this.place(ch, first + i));
+  /** Triangle count of a module (perf reporting / tests). */
+  moduleTriangles(): Record<string, number> {
+    const o: Record<string, number> = {};
+    for (const [k, m] of this.modules) o[k] = m.triangles;
+    return o;
+  }
+
+  update(playerS: number, zone: number, _zoneBlend: number, dt: number): void {
+    this.time += dt;
+    // Debug zone override: shift every chunk's zone by the difference to the positional zone.
+    const posZone = Math.floor(playerS / ZONE_LENGTH) % ZONE_COUNT;
+    const offset = (((zone - posZone) % ZONE_COUNT) + ZONE_COUNT) % ZONE_COUNT;
+    if (offset !== this.zoneOffset || playerS < this.lastS - 1) {
+      this.zoneOffset = offset;
+      this.relayout(playerS);
+    }
+    this.lastS = playerS;
+
+    const first = Math.floor((playerS - BEHIND) / CHUNK_LEN);
+    const last = first + CHUNK_COUNT - 1;
+    const chunks = this.chunks;
+    // Index loops only: update() runs every frame and must not allocate.
+    for (let k = first; k <= last; k++) {
+      let have = false;
+      for (let c = 0; c < chunks.length; c++) if (chunks[c].index === k) { have = true; break; }
+      if (have) continue;
+      for (let c = 0; c < chunks.length; c++) {
+        const ch = chunks[c];
+        if (!(ch.index >= first && ch.index <= last)) {
+          this.place(ch, k);
+          break;
+        }
+      }
+    }
+    for (let c = 0; c < chunks.length; c++) {
+      const ch = chunks[c];
+      const want = ch.index * CHUNK_LEN - playerS < DETAIL_AHEAD;
+      if (want !== ch.detail) this.setDetail(ch, want);
+    }
+    this.animate();
+  }
+
+  private setDetail(ch: Chunk, on: boolean): void {
+    ch.detail = on;
+    for (let i = 0; i < ch.staticCount; i++) if (ch.small[i]) ch.statics[i].visible = on;
+  }
+
+  // ------------------------------------------------------------------ internal
+
+  private relayout(playerS: number): void {
+    const first = Math.floor((playerS - BEHIND) / CHUNK_LEN);
+    for (let i = 0; i < this.chunks.length; i++) this.place(this.chunks[i], first + i);
   }
 
   private place(ch: Chunk, index: number): void {
+    const zone = chunkZone(index, this.zoneOffset, ZONE_LENGTH, ZONE_COUNT);
     ch.index = index;
     ch.node.position.z = this.stage.worldZ(index * CHUNK_LEN);
-    ch.lots.forEach((m, i) => {
-      const side = i < LOTS_PER_SIDE ? -1 : 1;
-      m.geometry = this.buildings[side][Math.floor(hash01(index, i + 7) * BUILDING_VARIANTS)];
-    });
+    const lay = layoutChunk(index, zone, this.widths, this.low);
+    ch.zone = zone;
+    ch.detail = index * CHUNK_LEN - this.lastS < DETAIL_AHEAD;
+    let n = 0;
+    for (const it of lay.items) {
+      const mod = this.modules.get(it.key);
+      if (!mod || n >= ch.statics.length) continue;
+      const m = ch.statics[n++];
+      m.geometry = mod.geometry;
+      if (m.material !== mod.material) m.material = mod.material;
+      if (m.castShadow !== mod.shadow) m.castShadow = mod.shadow;
+      m.position.set(it.x, it.y, -it.u);
+      m.rotation.y = it.rot;
+      ch.small[n - 1] = mod.small;
+      m.visible = !mod.small || ch.detail;
+    }
+    ch.staticCount = n;
+    for (let i = n; i < ch.statics.length; i++) ch.statics[i].visible = false;
+    // Shadow proxies for the buildings of this chunk.
+    let pc = 0;
+    for (const it of lay.items) {
+      const boxes = this.shadows.get(it.key);
+      if (!boxes) continue;
+      const c = Math.cos(it.rot), sn = Math.sin(it.rot);
+      for (const b of boxes) {
+        if (pc >= ch.proxies.length) break;
+        const p = ch.proxies[pc++];
+        const cx = (b[0] + b[3]) / 2, cz = (b[2] + b[5]) / 2;
+        p.position.set(it.x + c * cx + sn * cz, it.y + (b[1] + b[4]) / 2, -it.u - sn * cx + c * cz);
+        p.rotation.y = it.rot;
+        p.scale.set(b[3] - b[0], b[4] - b[1], b[5] - b[2]);
+        p.visible = true;
+      }
+    }
+    ch.proxyCount = pc;
+    for (let i = pc; i < ch.proxies.length; i++) ch.proxies[i].visible = false;
+    let a = 0;
+    for (const it of lay.anim) {
+      const mod = this.modules.get(it.key);
+      if (!mod || a >= ch.anims.length) continue;
+      const slot = ch.anims[a++];
+      slot.mesh.geometry = mod.geometry;
+      if (slot.mesh.castShadow !== mod.shadow) slot.mesh.castShadow = mod.shadow;
+      slot.mesh.position.set(it.x, it.y, -it.u);
+      slot.mesh.rotation.set(0, it.rot, 0);
+      slot.kind = it.anim;
+      slot.phase = it.phase;
+      slot.baseY = it.y;
+      slot.mesh.visible = true;
+    }
+    for (let i = a; i < ch.anims.length; i++) ch.anims[i].mesh.visible = false;
+    ch.animCount = a;
+  }
+
+  private animate(): void {
+    const t = this.time;
+    for (let c = 0; c < this.chunks.length; c++) {
+      const ch = this.chunks[c];
+      for (let i = 0; i < ch.animCount; i++) {
+        const s = ch.anims[i];
+        const m = s.mesh;
+        if (s.kind === 'swing') {
+          m.rotation.x = Math.sin(t * 1.25 + s.phase) * 0.07 + Math.sin(t * 2.9 + s.phase * 2) * 0.02;
+        } else {
+          m.position.y = s.baseY + Math.sin(t * 0.9 + s.phase) * 0.09;
+          m.rotation.z = Math.sin(t * 0.75 + s.phase) * 0.035;
+          m.rotation.x = Math.sin(t * 0.6 + s.phase * 1.7) * 0.02;
+        }
+      }
+    }
+  }
+
+  /** Draw every module once in front of the camera so GPU uploads + shader builds happen now. */
+  private prewarm(): void {
+    const warm = new Container3D({ label: 'scenery-prewarm', parent: this.root });
+    let i = 0;
+    for (const mod of this.modules.values()) {
+      const m = new Mesh3D({ parent: warm, geometry: mod.geometry, material: mod.material, castShadow: false });
+      m.position.set((i % 10) - 5, 0, -40 - Math.floor(i / 10));
+      m.scale.set(0.01, 0.01, 0.01);
+      i++;
+    }
+    const cam = this.stage.camera;
+    const px = cam.position.x, py = cam.position.y, pz = cam.position.z;
+    try {
+      this.stage.render();
+    } catch {
+      // A failed warm-up only costs a hitch later.
+    }
+    cam.position.set(px, py, pz);
+    for (const c of warm.removeChildren()) c.destroy();
+    warm.destroy();
   }
 }
