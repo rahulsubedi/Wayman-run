@@ -88,6 +88,7 @@
 .wr-round:active { box-shadow: 0 0 0 0.14em rgba(255, 255, 255, 0.4), 0 0.05em 0.3em rgba(0, 0, 0, 0.35); }
 .wr-round .wr-ico-wrap { width: 1.45em; height: 1.45em; }
 .wr-mute.wr-off { color: #ff9b8f; }
+.wr-mute-wide.wr-off { color: #c23a2a; }
 .wr-mute-wide { font-size: 1.05em; padding: 0.5em 1em; }
 .wr-mute-wide .wr-ico-wrap { width: 1.3em; height: 1.3em; }
 

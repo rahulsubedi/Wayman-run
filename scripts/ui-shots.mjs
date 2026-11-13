@@ -50,7 +50,7 @@ for (const v of VIEWS) {
   const shot = async (name, wait = 900) => {
     await page.waitForTimeout(wait);
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    await page.screenshot({ path: join(OUT, `${v.name}-${name}.png`) });
+    await page.screenshot({ path: join(OUT, `${v.name}-${name}.png`), timeout: 180000 });
   };
 
   await page.evaluate(() => window.__wayman.game.ui.showMenu({ score: 24680, coins: 312 }));
@@ -84,7 +84,7 @@ for (const v of VIEWS) {
   await page.evaluate(() => window.__wayman.game.ui.cancelCountdown());
 
   await page.evaluate(() => window.__wayman.game.ui.showGameOver({ score: 15230, coins: 87, best: 15230, newBest: true, reason: 'crash' }));
-  await shot('gameover-best', 1900);
+  await shot('gameover-best', 1150);
   await page.evaluate(() => window.__wayman.game.ui.showGameOver({ score: 4210, coins: 23, best: 24680, newBest: false, reason: 'caught' }));
   await shot('gameover-caught', 1700);
   await ctx.close();

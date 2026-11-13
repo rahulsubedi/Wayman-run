@@ -375,7 +375,9 @@ export class UI {
     for (const c of this.chips) {
       c.q = -1;
       c.low = false;
+      c.root.classList.remove('wr-on', 'wr-low');
     }
+    this.multEl.classList.remove('wr-on');
     this.show('hud');
   }
 
