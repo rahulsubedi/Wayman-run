@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wayman Run - model gallery (dev)</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #9fb2c2; font: 600 13px system-ui, sans-serif; }
+      #labels { position: fixed; inset: 0; pointer-events: none; }
+      .lbl { position: absolute; transform: translate(-50%, 0); color: #fff; background: rgba(20, 28, 40, 0.72); padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+      #title { position: fixed; left: 12px; top: 10px; color: #fff; background: rgba(20, 28, 40, 0.72); padding: 4px 10px; border-radius: 8px; font-size: 15px; }
+      #nav { position: fixed; right: 10px; top: 10px; display: flex; gap: 4px; flex-wrap: wrap; max-width: 60vw; justify-content: flex-end; }
+      #nav button { font: inherit; border: 0; border-radius: 6px; padding: 4px 8px; background: rgba(20, 28, 40, 0.72); color: #fff; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div id="labels"></div>
+    <div id="title"></div>
+    <div id="nav"></div>
+    <script type="module" src="./src/view/models/gallery.ts"></script>
+  </body>
+</html>
