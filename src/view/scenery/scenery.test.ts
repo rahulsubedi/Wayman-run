@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ZONE_COUNT, ZONE_LENGTH } from '../../sim/config';
-import { chunkZone, layoutChunk } from './layout';
+import { chunkZone, layoutChunk, openQuay } from './layout';
 import { CHUNK_LEN, ROAD_CLEAR_X, ROAD_CLEAR_Y } from './layoutConst';
 import { lowTable, moduleDefs, widthTable } from './library';
 import { Z_MAX, zCuts } from './kit';
@@ -31,6 +31,7 @@ describe('scenery layout', () => {
       for (let i = 0; i < 60; i++) {
         const l = layoutChunk(i, z, widths, low);
         for (const side of [1, -1]) {
+          if (side < 0 && openQuay(i, z)) continue; // open quay: water instead of a street front
           const b = l.items.filter((it) => it.key.startsWith(`b${z}_`) && Math.sign(it.x) === side);
           const used = b.reduce((a, it) => a + widths[z][Number(it.key.split('_')[1])], 0);
           expect(used).toBeLessThanOrEqual(CHUNK_LEN);
@@ -111,7 +112,7 @@ describe('curved-world tessellation', () => {
 
   it('keeps no triangle of the ground, lot fill, quay or sea longer than Z_MAX along Z', () => {
     for (const [k, a] of arrays) {
-      if (!(k.startsWith('ground') || k.startsWith('fill:') || k === 'sea')) continue;
+      if (!(k.startsWith('ground') || k.startsWith('fill:') || k.startsWith('sea'))) continue;
       for (let t = 0; t < a.indices.length; t += 3) expect(zExtent(a, t), `${k} triangle ${t / 3}`).toBeLessThanOrEqual(Z_MAX + 1e-6);
     }
   });

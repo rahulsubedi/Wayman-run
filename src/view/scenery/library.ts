@@ -4,7 +4,8 @@
 import type { MeshBuilder } from '../geom';
 import { buildBackRow, buildFar } from './backdrop';
 import { buildBuilding, shadowBoxes, zoneSpecs, zoneWalls, type Box, type ZoneFamily } from './buildings';
-import { buildGround, buildLotFill, buildSea, GROUND_VARIANTS } from './ground';
+import { buildGround, buildLotFill, buildQuayOpen, buildSea, GROUND_VARIANTS } from './ground';
+import { QUAY_NEAR } from './layoutConst';
 import { VARIANTS, type WidthTable } from './layout';
 import { buildBunting, buildGate, buildLanterns } from './overhead';
 import { propCatalogue } from './props';
@@ -18,7 +19,7 @@ export interface ModuleDef {
   material: 'main' | 'water';
 }
 
-const MEDIUM = new Set(['cafe', 'cafeNight', 'stall', 'stallNight', 'foodStall', 'crates', 'palm', 'boat0', 'boat1']);
+const MEDIUM = new Set(['cafe', 'cafeNight', 'stall', 'stallNight', 'foodStall', 'crates', 'palm', 'boat0', 'boat1', 'boat2']);
 const SMALL = new Set(['bin', 'hydrant', 'bollards', 'scooter', 'bicycle', 'signpost', 'pots', 'bench', 'laundry', 'hedge', 'planter', 'barrels', 'nets']);
 
 export function moduleDefs(): Map<string, ModuleDef> {
@@ -27,7 +28,9 @@ export function moduleDefs(): Map<string, ModuleDef> {
   for (let v = 0; v < GROUND_VARIANTS; v++) add(`ground${v}`, () => buildGround(v));
   add('fill:town', () => buildLotFill('town'));
   add('fill:quay', () => buildLotFill('quay'));
-  add('sea', buildSea, false, 'water');
+  add('fill:quayOpen', buildQuayOpen);
+  add('sea', () => buildSea(), false, 'water');
+  add('seaOpen', () => buildSea(QUAY_NEAR), false, 'water');
   for (const z of [0, 1, 2] as ZoneFamily[]) {
     // Buildings cast through shadow proxies (shadowTable), not their detailed geometry.
     zoneSpecs(z).forEach((spec, i) => add(`b${z}_${i}`, () => buildBuilding(spec, zoneWalls(z))));
@@ -37,6 +40,7 @@ export function moduleDefs(): Map<string, ModuleDef> {
   for (const kind of ['town', 'night', 'harbor'] as const) {
     for (let v = 0; v < 2; v++) add(`bg:${kind}:${v}`, () => buildBackRow(kind, v).merge(buildFar(kind, v)));
   }
+  for (let v = 0; v < 2; v++) add(`back:night:${v}`, () => buildBackRow('night', v));
   for (let v = 0; v < VARIANTS.farSea; v++) add(`far:sea:${v}`, () => buildFar('sea', v));
   for (let v = 0; v < VARIANTS.bunting; v++) add(`bunting${v}`, () => buildBunting(v, false));
   for (let v = 0; v < VARIANTS.flags; v++) add(`flags${v}`, () => buildBunting(10 + v, true));

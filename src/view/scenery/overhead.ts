@@ -101,7 +101,8 @@ export function buildGate(zone: 0 | 1 | 2): MeshBuilder {
     // Sign letters on the beam.
     for (let k = 0; k < 8; k++) slab(mb, -3.0 + k * 0.78, 11.7, 0.6, -2.55 + k * 0.78, 12.3, 0.66, 0xfbf3e4, PZ);
   } else if (zone === 1) {
-    const steel = 0x3f6f86;
+    // Dockside gantry in crane orange (the harbour's signature colour) with a navy name board.
+    const steel = 0xe07a2e;
     for (const s of [-1, 1]) {
       for (const xa of [5.0, 6.4]) for (const za of [-0.6, 0.6]) bar(mb, [s * xa, 0.15, za], [s * xa, 12.6, za], 0.16, grad(steel, 0.8), 4);
       for (let y = 1.2; y < 12; y += 1.4) {
@@ -118,8 +119,21 @@ export function buildGate(zone: 0 | 1 | 2): MeshBuilder {
       bar(mb, [x, 11.3, -0.6], [x + 1.2, 12.6, -0.6], 0.06, steel);
     }
     // Sign board with letters + small lamps.
-    slab(mb, -3.6, 12.75, 0.4, 3.6, 14.2, 0.55, grad(0xf1ece1, 0.9), PZ | NX | PX | PY);
-    for (let k = 0; k < 6; k++) slab(mb, -3.1 + k * 1.05, 13.05, 0.55, -2.4 + k * 1.05, 13.9, 0.6, 0x1f4e6b, PZ);
+    slab(mb, -3.8, 12.75, 0.35, 3.8, 14.4, 0.55, grad(0x1f4e6b, 0.85), PZ | NX | PX | PY | NZ);
+    slab(mb, -3.9, 12.65, 0.3, 3.9, 12.8, 0.6, 0xf1ece1, ALLS);
+    slab(mb, -3.9, 14.35, 0.3, 3.9, 14.5, 0.6, 0xf1ece1, ALLS);
+    for (let k = 0; k < 6; k++) slab(mb, -3.1 + k * 1.05, 13.15, 0.55, -2.4 + k * 1.05, 14.0, 0.6, 0xf6f0e3, PZ);
+    // Anchor emblems on the tower fronts (white on the orange truss).
+    for (const s1 of [-1, 1]) {
+      const ax = s1 * 5.7, ay = 7.6, z = 0.82, c = 0xf1ece1;
+      slab(mb, ax - 0.09, ay - 1.3, z - 0.1, ax + 0.09, ay + 0.55, z + 0.1, c, ALLS | 8); // shank
+      slab(mb, ax - 0.45, ay + 0.22, z - 0.1, ax + 0.45, ay + 0.37, z + 0.1, c, ALLS | 8); // stock
+      mb.push().translate(ax, ay + 0.75, z).rotateX(Math.PI / 2).cylinder(0.2, 0.18, 8, {}, c).pop(); // ring
+      for (const s2 of [-1, 1]) {
+        mb.push().translate(ax + s2 * 0.38, ay - 1.08, z).rotateZ(s2 * 0.75).box(0.8, 0.16, 0.18, c).pop(); // arms
+        mb.push().translate(ax + s2 * 0.7, ay - 0.82, z).rotateZ(s2 * -0.5).box(0.18, 0.4, 0.18, c).pop(); // flukes
+      }
+    }
     for (const x of [-2.4, 0, 2.4]) mb.push().translate(x, 14.4, 0.7).box(0.3, 0.18, 0.3, 0x2a2f33).pop();
     // Life buoys on the towers.
     for (const s of [-1, 1]) {

@@ -15,7 +15,7 @@ import { Container3D, Mesh3D } from '@pixi/3d';
 import { ONCOMING_SPEED, PICKUP_HOVER } from '../../sim/config';
 import type { ObstacleKind, PickupKind } from '../../sim/types';
 import { glow, vertexColorMaterial } from '../geom/materials';
-import { cachedParts, glowVC, meshOf, paintGloss, windowGlass, type Part } from './kit';
+import { cachedParts, glowVC, meshOf, nightVC, paintGloss, windowGlass, type Part } from './kit';
 import { buildSmallObstacle, type ObstacleBuilders } from './obstacles';
 import { pickupParts } from './pickups';
 import { buildVehicle, VEHICLE_VARIANTS } from './vehicles';
@@ -34,6 +34,7 @@ function toParts(b: ObstacleBuilders, vehicle: boolean): { parts: Part[]; axle: 
   const parts: Part[] = [{ geometry: b.body.build(), material: vehicle ? paintGloss() : vertexColorMaterial({ roughness: 0.7 }), label: 'body' }];
   if (b.glass && b.glass.vertexCount > 0) parts.push({ geometry: b.glass.build(), material: windowGlass(), label: 'glass', castShadow: false });
   if (b.glow && b.glow.vertexCount > 0) parts.push({ geometry: b.glow.build(), material: glowVC(b.glowStrength ?? 2), label: 'glow', castShadow: false });
+  if (b.night && b.night.vertexCount > 0) parts.push({ geometry: b.night.build(), material: nightVC(), label: 'night', castShadow: false });
   if (b.lamps && b.lamps.vertexCount > 0) parts.push({ geometry: b.lamps.build(), material: glow(b.lampColor ?? 0xffb020, 3.2), label: 'lamp', castShadow: false });
   const axle = b.axle ? { geometry: b.axle.build(), material: paintGloss(), label: 'axle' } : null;
   return { parts, axle };

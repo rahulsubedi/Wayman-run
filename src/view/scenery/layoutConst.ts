@@ -9,3 +9,5 @@ export const QUAY_EDGE = 22;
 /** Gameplay volume nothing of ours may enter: |x| < ROAD_CLEAR_X while y < ROAD_CLEAR_Y. */
 export const ROAD_CLEAR_X = 4.6;
 export const ROAD_CLEAR_Y = 11;
+/** Harbour open-quay stretches: the quay edge sits right behind a narrow deck, water beyond. */
+export const QUAY_NEAR = 12;
