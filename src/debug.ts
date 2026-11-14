@@ -2,7 +2,7 @@
 //
 // URL params: ?autostart=1  seed=<n>  autopilot=1  quality=low|medium|high  zone=<0..2>  mute=1
 //             renderer=webgl|webgpu (default: WebGPU when supported, else WebGL2)
-//             bend=0|1   curved-world effect on/off (only if the renderer provides it)
+//             bend=0|1   curved-world effect off/on; bend=<down>,<side>  fixed bend (metres at 100 m)
 // window.__wayman = { ready, state(), start(), advance(seconds), setAutopilot(on), errors,
 //   game, mode(), pause(), resume(), home(), seed(n),
 //   forceStumble(), forceCrash(reason?), forcePickup(kind), setZone(z|null), bend(on), stats() }
@@ -21,6 +21,8 @@ export interface DebugParams {
   renderer: BackendPreference;
   /** `bend=0|1`; null when the param is absent. */
   bend: boolean | null;
+  /** `bend=<down>,<side>` fixed amounts, else null. */
+  bendValues: { down: number; side: number } | null;
 }
 
 export interface WaymanHook {
@@ -70,7 +72,8 @@ export function readParams(search: string = location.search): DebugParams {
     zone: zone !== null && /^[0-2]$/.test(zone) ? Number(zone) : null,
     mute: q.get('mute') === '1',
     renderer: renderer === 'webgl' || renderer === 'webgpu' ? renderer : 'auto',
-    bend: q.get('bend') === '1' ? true : q.get('bend') === '0' ? false : null,
+    bend: q.get('bend') === '1' ? true : q.get('bend') === '0' ? false : q.get('bend') ? true : null,
+    bendValues: /^-?[\d.]+,-?[\d.]+$/.test(q.get('bend') ?? '') ? { down: Number(q.get('bend')!.split(',')[0]), side: Number(q.get('bend')!.split(',')[1]) } : null,
   };
 }
 
@@ -123,6 +126,7 @@ export function installDebugHook(): { hook: WaymanHook; attach(game: Game, param
       game = g;
       hook.game = g;
       if (params.bend !== null) applyBend(g, params.bend);
+      if (params.bendValues) g.stage.setWorldBend(params.bendValues);
       if (params.autopilot) g.autopilot = autopilot;
       if (params.autostart) g.start(params.seed);
       g.stage.render();
@@ -142,24 +146,8 @@ export { autopilot };
 
 // ----------------------------------------------------------------------- curved world
 
-/**
- * The curved-world shader effect is being added to the stage in parallel, so its API is
- * feature-detected by name at runtime. Calls the first matching function with 0/1 (works for
- * both boolean and amount signatures) or assigns a matching property.
- */
+/** Curved-world switch: on/off through the stage's own API. */
 function applyBend(g: Game, on: boolean): boolean {
-  const stage = g.stage as unknown as Record<string, unknown>;
-  for (const name of ['setWorldBend', 'setBend', 'setCurvedWorld', 'setWorldCurve', 'setCurve']) {
-    if (name in stage && typeof stage[name] === 'function') {
-      (stage[name] as (v: number) => void).call(stage, on ? 1 : 0);
-      return true;
-    }
-  }
-  for (const name of ['worldBend', 'bend', 'curvedWorld']) {
-    if (name in stage && typeof stage[name] !== 'function') {
-      stage[name] = on ? 1 : 0;
-      return true;
-    }
-  }
-  return false;
+  g.stage.setWorldBendEnabled(on);
+  return true;
 }
