@@ -121,6 +121,7 @@ for (const backend of args.backends.split(',')) {
         };
         // count draw calls by wrapping the low-level draw entry points for one frame
         let draws = 0;
+        let bundles = 0; // WebGPU render bundles replayed (their draws are recorded once, not counted above)
         const unwrap = [];
         const wrap = (obj, name) => {
           if (!obj || typeof obj[name] !== 'function') return;
@@ -137,6 +138,10 @@ for (const backend of args.backends.split(',')) {
             enc.beginRenderPass = (pd) => {
               const pass = origPass(pd);
               for (const f of ['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect']) wrap(pass, f);
+              if (typeof pass.executeBundles === 'function') {
+                const ex = pass.executeBundles.bind(pass);
+                pass.executeBundles = (list) => { bundles += list.length; return ex(list); };
+              }
               return pass;
             };
             return enc;
@@ -146,6 +151,7 @@ for (const backend of args.backends.split(',')) {
         game.stage.render();
         await wait();
         const drawCalls = draws;
+        const bundlesReplayed = bundles;
         for (const u of unwrap) u();
         const times = [];
         for (let i = 0; i < n; i++) {
@@ -155,7 +161,7 @@ for (const backend of args.backends.split(',')) {
           times.push(Date.now() - t0);
         }
         times.sort((a, b) => a - b);
-        return { drawCalls, frames: n, medianMs: +times[Math.floor(n / 2)].toFixed(1), minMs: +times[0].toFixed(1) };
+        return { drawCalls, bundlesReplayed, frames: n, medianMs: +times[Math.floor(n / 2)].toFixed(1), minMs: +times[0].toFixed(1) };
       }, args.perf);
     }
   } catch (e) {
