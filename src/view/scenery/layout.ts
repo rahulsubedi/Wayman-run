@@ -172,7 +172,8 @@ function fill(rnd: R, side: 1 | -1, zone: number, list: readonly (readonly [stri
 export const VARIANTS = { ground: 3, backTown: 2, backNight: 2, backHarbor: 2, farTown: 2, farNight: 2, farHarbor: 2, farSea: 2, bunting: 2, flags: 2, lanterns: 1 };
 
 export function chunkZone(index: number, offset: number, zoneLen: number, zoneCount: number): number {
-  const z = Math.floor((index * CHUNK_LEN) / zoneLen) + offset;
+  // Chunks behind the start line (negative index) belong to the same zone as the first chunk.
+  const z = Math.floor((Math.max(0, index) * CHUNK_LEN) / zoneLen) + offset;
   return ((z % zoneCount) + zoneCount) % zoneCount;
 }
 

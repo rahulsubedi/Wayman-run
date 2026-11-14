@@ -47,6 +47,12 @@ describe('scenery layout', () => {
     expect(chunkZone(2 * (ZONE_LENGTH / CHUNK_LEN), 2, ZONE_LENGTH, ZONE_COUNT)).toBe(1);
   });
 
+  it('puts chunks behind the start line (negative index) in the same zone as chunk 0', () => {
+    for (const off of [0, 1, 2]) {
+      for (const i of [-1, -2, -5, -40]) expect(chunkZone(i, off, ZONE_LENGTH, ZONE_COUNT)).toBe(chunkZone(0, off, ZONE_LENGTH, ZONE_COUNT));
+    }
+  });
+
   it('keeps every placed vertex out of the road volume (|x| < 4.6 and y < 11)', () => {
     for (let z = 0; z < 3; z++) {
       for (let i = 0; i < 30; i++) {
