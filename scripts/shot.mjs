@@ -13,6 +13,8 @@
 //                           default: serve ./dist with a built-in static server on a free port
 //   --width <px> --height <px>   viewport (default 1280x720)
 //   --renderer webgl|webgpu       adds renderer=... to the query (default: let the game choose)
+//   --webgpu                launch Chromium with the SwiftShader WebGPU flags and add renderer=webgpu
+//                           (the summary's `backend` field shows what the game actually runs on)
 //   --timeout <ms>          wait for __wayman.ready (default 60000)
 //
 // Prints a JSON summary (sim state after each shot) and every console error / page error.
@@ -29,10 +31,15 @@ const { chromium } = require('playwright');
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
+// Headless WebGPU here needs ALL of these (a subset crashes the page or yields no adapter).
+export const WEBGPU_FLAGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader',
+  '--use-webgpu-adapter=swiftshader', '--use-angle=swiftshader'];
+
 function parseArgs(argv) {
-  const o = { out: 'shots/shot.png', params: '', advance: 0, seq: '', url: '', width: 1280, height: 720, renderer: '', timeout: 60000 };
+  const o = { out: 'shots/shot.png', params: '', advance: 0, seq: '', url: '', width: 1280, height: 720, renderer: '', timeout: 60000, webgpu: false };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i].replace(/^--/, '');
+    if (k === 'webgpu') { o.webgpu = true; if (!o.renderer) o.renderer = 'webgpu'; continue; }
     const v = argv[i + 1];
     if (!(k in o)) throw new Error(`unknown option --${k}`);
     o[k] = typeof o[k] === 'number' ? Number(v) : v;
@@ -70,11 +77,15 @@ async function main() {
     ? o.seq.split(',').map((p) => { const [s, f] = p.split('='); return { advance: Number(s), out: f }; })
     : [{ advance: o.advance, out: o.out }];
 
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(o.webgpu ? { args: WEBGPU_FLAGS } : undefined);
   const page = await browser.newPage({ viewport: { width: o.width, height: o.height } });
   const consoleErrors = [];
   const pageErrors = [];
-  page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+  const consoleWarnings = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error') consoleErrors.push(m.text());
+    else if (m.type() === 'warning') consoleWarnings.push(m.text());
+  });
   page.on('pageerror', (e) => pageErrors.push(e.stack || e.message));
 
   const summary = { url, shots: [] };
@@ -83,7 +94,11 @@ async function main() {
     await page.goto(url);
     await page.waitForFunction(() => window.__wayman && window.__wayman.ready, null, { timeout: o.timeout });
     await page.evaluate(() => window.__wayman.ready);
-    summary.backend = await page.evaluate(() => document.querySelector('canvas') ? 'ok' : 'no-canvas');
+    summary.backend = await page.evaluate(() => {
+      const st = window.__wayman.game?.stage;
+      return st ? st.backend : document.querySelector('canvas') ? 'unknown' : 'no-canvas';
+    });
+    if (o.renderer && summary.backend !== o.renderer) summary.backendMismatch = `asked for ${o.renderer}, running ${summary.backend}`;
     for (const shot of shots) {
       const t0 = Date.now();
       if (shot.advance > 0) await page.evaluate((s) => window.__wayman.advance(s), shot.advance);
@@ -105,6 +120,7 @@ async function main() {
     try { await page.screenshot({ path: shots[0].out }); } catch { /* ignore */ }
   }
   summary.consoleErrors = consoleErrors;
+  if (consoleWarnings.length) summary.consoleWarnings = consoleWarnings;
   summary.pageErrors = pageErrors;
   console.log(JSON.stringify(summary, null, 2));
   await browser.close();
