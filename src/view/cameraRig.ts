@@ -522,8 +522,8 @@ export class CameraRig {
     const slide = smooth01((this.overTime - 0.35) / 0.65);
     // (Toward the side the camera stands on: the hero falls back toward it, away from the solids.)
     const u = slide * lerp(caught ? -0.46 : -0.42, 0, pt) * spot.side;
-    const v = slide * lerp(0, 0.58, pt);
-    this.aim(o, p.x + (caught ? spot.side * 0.2 : 0), p.y + (caught ? 0.9 : 0.4), hz + (caught ? 1.2 : 1.1), u, v);
+    const v = slide * lerp(0, caught ? 0.44 : 0.66, pt);
+    this.aim(o, p.x + (caught ? spot.side * 0.2 : 0), p.y + (caught ? 0.9 : 0.4), hz + (caught ? 1.2 : 1.1 + 0.4 * pt), u, v);
   }
 
   /**
@@ -537,14 +537,18 @@ export class CameraRig {
     let pref: 1 | -1 = p.x > 0.5 ? -1 : p.x < -0.5 ? 1 : this.sideLoad(p, hz, 1) <= this.sideLoad(p, hz, -1) ? 1 : -1;
     if (caught && Math.abs(p.x) <= 0.5 && this.sideLoad(p, hz, 1) === this.sideLoad(p, hz, -1)) pref = 1;
     const views = caught ? CAUGHT_VIEWS : CRASH_VIEWS;
-    const r = caught ? 4.7 : 5.8;
+    // Portrait: crash views swing toward straight behind (the fallen hero then lies along the
+    // tall axis of the screen), and the caught view stands further back (drone above him).
+    const pt = this.portrait();
+    const r = (caught ? 4.7 : 5.8) * (1 + (caught ? 0.2 : 0.4) * pt);
+    const azScale = caught ? 1 : 1 - 0.55 * pt;
     const h0 = caught ? 4.0 : 3.5;
     // Each view first tries going higher (up to +3 m) before the next view is considered; then
     // every view once more from high up.
     for (let pass = 0; pass < 2; pass++) {
       for (let i = 0; i < views.length; i += 2) {
         const side = (views[i + 1] * pref) as 1 | -1;
-        const az = views[i] * D2R * side;
+        const az = views[i] * azScale * D2R * side;
         for (let hi = pass === 0 ? 0 : 3; hi < (pass === 0 ? 3 : 5); hi++) {
           const h = h0 + hi * 1.5;
           // First pass: only spots with room to stand back (not squeezed against the kerb).
@@ -556,7 +560,7 @@ export class CameraRig {
         }
       }
     }
-    spot.az = views[0] * D2R * pref; spot.r = r * 0.8; spot.h = h0 + 5; spot.side = pref; spot.chosen = true;
+    spot.az = views[0] * azScale * D2R * pref; spot.r = r * 0.8; spot.h = h0 + 5; spot.side = pref; spot.chosen = true;
   }
 
   /** True when the road corridor forces the camera much closer than `r` at azimuth `az`. */
