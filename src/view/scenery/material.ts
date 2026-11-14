@@ -6,8 +6,13 @@
 // heads live inside the same merged geometry as their building / prop, so they cost no extra draw
 // calls, and the bloom pass (threshold 1.0 linear) picks up anything that emits above 1.
 // Opaque alpha mode ignores alpha for blending, so the encoding is invisible otherwise.
+//
+// Curved world: both materials bend with the rest of the 3D world (geom/worldBend.ts adds the
+// projection warp to every fogged material). The explicit `setMaterialBend` below keeps it that
+// way even if someone later turns their fog off.
 import { Material3D } from '@pixi/3d';
 import type { ShaderBit } from '@pixi/3d';
+import { setMaterialBend } from '../geom/worldBend';
 import { GLOW_MAX } from './kit';
 
 const glowBit: ShaderBit = {
@@ -26,6 +31,7 @@ export function sceneryMaterial(): Material3D {
     main = new Material3D({ baseColor: 0xffffff, vertexColors: true, roughness: 0.86, metallic: 0, extraBits: [glowBit] });
     main.label = 'scenery';
     main.data.glow = GLOW_MAX;
+    setMaterialBend(main, true);
   }
   return main;
 }
@@ -36,6 +42,7 @@ export function waterMaterial(): Material3D {
     water = new Material3D({ baseColor: 0xffffff, vertexColors: true, roughness: 0.22, metallic: 0.15, extraBits: [glowBit] });
     water.label = 'scenery-water';
     water.data.glow = GLOW_MAX;
+    setMaterialBend(water, true);
   }
   return water;
 }
