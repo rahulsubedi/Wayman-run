@@ -143,16 +143,16 @@ export function buildLotFill(kind: 'town' | 'quay'): MeshBuilder {
   for (let u = 0; u < CHUNK_LEN - 1e-6; u += 2.5) {
     panelPY(mb, SIDEWALK_OUTER, -u, edge - 0.6, -(u + 2.5), SW_Y, rnd.chance(0.5) ? 0xb9ab92 : 0xc2b49a);
   }
-  slab(mb, edge - 0.6, 0, -CHUNK_LEN, edge, SW_Y + 0.12, 0, grad(0xd8d2c4, 0.85), PY | PX | NX);
-  slab(mb, edge - 0.02, -2.6, -CHUNK_LEN, edge, 0, 0, grad(0x8d8576, 0.6), PX);
+  slab(mb, edge - 0.6, 0, -CHUNK_LEN, edge, SW_Y + 0.12, 0, grad(0xd8d2c4, 0.85), PY | PX | NX, true);
+  slab(mb, edge - 0.02, -2.6, -CHUNK_LEN, edge, 0, 0, grad(0x8d8576, 0.6), PX, true);
   // Weed/wet line on the quay wall.
-  slab(mb, edge, -1.55, -CHUNK_LEN, edge + 0.02, -1.25, 0, 0x4e5a4a, PX);
+  slab(mb, edge, -1.55, -CHUNK_LEN, edge + 0.02, -1.25, 0, 0x4e5a4a, PX, true);
   // Railing posts + two rails along the quay edge.
   for (let u = 1; u < CHUNK_LEN; u += 2.5) {
     slab(mb, edge - 0.38, SW_Y + 0.12, -(u + 0.06), edge - 0.26, 1.25, -(u - 0.06), P.IRON, PX | NX | PZ | NZ | PY);
   }
   for (const y of [0.7, 1.22]) {
-    slab(mb, edge - 0.4, y - 0.04, -CHUNK_LEN, edge - 0.24, y + 0.04, 0, P.IRON_LIGHT, PX | NX | PY | 8);
+    slab(mb, edge - 0.4, y - 0.04, -CHUNK_LEN, edge - 0.24, y + 0.04, 0, P.IRON_LIGHT, PX | NX | PY | 8, true);
   }
   // Bollards with mooring ropes.
   for (const u of [6, 31]) {

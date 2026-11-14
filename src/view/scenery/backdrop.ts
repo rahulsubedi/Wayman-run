@@ -5,7 +5,7 @@
 // any two variants tile seamlessly.
 import { MeshBuilder } from '../geom';
 import { shadeHex, mixHex } from '../geom/color';
-import { glowPaint, grad, quadN, slab, bar, Rand, NX, PX, PY, PZ, NZ } from './kit';
+import { glowPaint, grad, quadN, quadNSplit, slab, bar, Rand, NX, PX, PY, PZ, NZ } from './kit';
 import * as P from './palette';
 import { CHUNK_LEN } from './layoutConst';
 
@@ -24,7 +24,7 @@ export function buildBackRow(kind: 'town' | 'night' | 'harbor', variant: number)
     const h = kind === 'harbor' ? rnd.range(9, 16) : rnd.range(11, 21);
     const wall = walls[rnd.int(walls.length)];
     const z0 = -(u + w), z1 = -u;
-    slab(mb, x0, 0, z0, x0 + 16, h, z1, { color: wall, top: shadeHex(wall, 1.02), bottom: shadeHex(wall, 0.72), jitter: 0.04 }, NX | PY | PZ | NZ);
+    slab(mb, x0, 0, z0, x0 + 16, h, z1, { color: wall, top: shadeHex(wall, 1.02), bottom: shadeHex(wall, 0.72), jitter: 0.04 }, NX | PY | PZ | NZ, true);
     // Upper windows (only the part that shows above the front row).
     const rows = Math.floor((h - 8) / 3.2) + 1;
     const cols = Math.max(1, Math.floor(w / 2.6));
@@ -43,16 +43,16 @@ export function buildBackRow(kind: 'town' | 'night' | 'harbor', variant: number)
       const rise = 3;
       quadN(mb, [x0, h, z0], [x0, h, z1], [x0, h + rise, (z0 + z1) / 2], [x0, h + rise, (z0 + z1) / 2], [-1, 0, 0], shadeHex(wall, 0.92));
       const roofC = rnd.pick([0x6d7b82, 0x9a4a35, 0x5c6b5a]);
-      quadN(mb, [x0 - 0.3, h, z1], [x0 + 16, h, z1], [x0 + 16, h + rise, (z0 + z1) / 2], [x0 - 0.3, h + rise, (z0 + z1) / 2], [0, w / 2, rise], roofC);
-      quadN(mb, [x0 - 0.3, h, z0], [x0 + 16, h, z0], [x0 + 16, h + rise, (z0 + z1) / 2], [x0 - 0.3, h + rise, (z0 + z1) / 2], [0, w / 2, -rise], shadeHex(roofC, 0.85));
+      quadNSplit(mb, [x0 - 0.3, h, z1], [x0 + 16, h, z1], [x0 + 16, h + rise, (z0 + z1) / 2], [x0 - 0.3, h + rise, (z0 + z1) / 2], [0, w / 2, rise], roofC);
+      quadNSplit(mb, [x0 - 0.3, h, z0], [x0 + 16, h, z0], [x0 + 16, h + rise, (z0 + z1) / 2], [x0 - 0.3, h + rise, (z0 + z1) / 2], [0, w / 2, -rise], shadeHex(roofC, 0.85));
     } else if (rnd.chance(0.55)) {
       // Pitched terracotta roof (ridge along the street).
       const rise = 2.6;
-      quadN(mb, [x0 - 0.4, h, z0], [x0 - 0.4, h, z1], [x0 + 5, h + rise, z1], [x0 + 5, h + rise, z0], [-rise, 5.4, 0], { color: P.ROOF_TILE, bottom: P.ROOF_TILE_DARK, jitter: 0.06 });
+      quadNSplit(mb, [x0 - 0.4, h, z0], [x0 - 0.4, h, z1], [x0 + 5, h + rise, z1], [x0 + 5, h + rise, z0], [-rise, 5.4, 0], { color: P.ROOF_TILE, bottom: P.ROOF_TILE_DARK, jitter: 0.06 });
       for (const [z, s] of [[z0, -1], [z1, 1]] as const) quadN(mb, [x0, h, z], [x0 + 10, h, z], [x0 + 5, h + rise, z], [x0 + 5, h + rise, z], [0, 0, s], shadeHex(wall, 0.9));
-      quadN(mb, [x0 + 5, h + rise, z0], [x0 + 5, h + rise, z1], [x0 + 10, h, z1], [x0 + 10, h, z0], [rise, 5, 0], shadeHex(P.ROOF_TILE, 0.8));
+      quadNSplit(mb, [x0 + 5, h + rise, z0], [x0 + 5, h + rise, z1], [x0 + 10, h, z1], [x0 + 10, h, z0], [rise, 5, 0], shadeHex(P.ROOF_TILE, 0.8));
     } else {
-      slab(mb, x0 - 0.1, h, z0, x0 + 16, h + 0.6, z1, mixHex(wall, 0xffffff, 0.3), NX | PY | PZ | NZ);
+      slab(mb, x0 - 0.1, h, z0, x0 + 16, h + 0.6, z1, mixHex(wall, 0xffffff, 0.3), NX | PY | PZ | NZ, true);
       if (rnd.chance(0.5)) {
         const z = (z0 + z1) / 2;
         mb.push().translate(x0 + 4, h + 1.6, z).cylinder(0.8, 1.6, 8, {}, grad(0xd9d4c8, 0.8)).pop();
@@ -125,8 +125,8 @@ export function buildFar(kind: 'town' | 'night' | 'harbor' | 'sea', variant: num
     const za = -(i * CHUNK_LEN) / n, zb = -((i + 1) * CHUNK_LEN) / n;
     const ha = hs[i], hb = hs[i + 1];
     // Front slope (faces the street) and a crest band.
-    quadN(mb, [x0, 0, za], [x0, 0, zb], [x1 - 30, hb, zb], [x1 - 30, ha, za], [-1, 0.6, 0], { color: base, top, bottom: shadeHex(base, 0.8), jitter: 0.06 });
-    quadN(mb, [x1 - 30, ha, za], [x1 - 30, hb, zb], [x1 + 40, hb * 0.6, zb], [x1 + 40, ha * 0.6, za], [-0.3, 1, 0], shadeHex(top, 0.95));
+    quadNSplit(mb, [x0, 0, za], [x0, 0, zb], [x1 - 30, hb, zb], [x1 - 30, ha, za], [-1, 0.6, 0], { color: base, top, bottom: shadeHex(base, 0.8), jitter: 0.06 });
+    quadNSplit(mb, [x1 - 30, ha, za], [x1 - 30, hb, zb], [x1 + 40, hb * 0.6, zb], [x1 + 40, ha * 0.6, za], [-0.3, 1, 0], shadeHex(top, 0.95));
   }
   // Houses / lights scattered on the slope.
   const count = kind === 'harbor' ? 10 : 22;
