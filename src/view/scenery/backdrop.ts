@@ -5,7 +5,7 @@
 // any two variants tile seamlessly.
 import { MeshBuilder } from '../geom';
 import { shadeHex, mixHex } from '../geom/color';
-import { glowPaint, grad, quadN, quadNSplit, slab, bar, Rand, NX, PX, PY, PZ, NZ } from './kit';
+import { glowPaint, grad, quadN, quadNSplit, slab, zCuts, bar, Rand, NX, PX, PY, PZ, NZ } from './kit';
 import * as P from './palette';
 import { CHUNK_LEN } from './layoutConst';
 
@@ -41,7 +41,14 @@ export function buildBackRow(kind: 'town' | 'night' | 'harbor', variant: number)
     if (kind === 'harbor') {
       // Warehouse gable seen end-on + ridge running back.
       const rise = 3;
-      quadN(mb, [x0, h, z0], [x0, h, z1], [x0, h + rise, (z0 + z1) / 2], [x0, h + rise, (z0 + z1) / 2], [-1, 0, 0], shadeHex(wall, 0.92));
+      // Gable end as a strip of trapezoids (cut on the grid and at the apex) so it bends smoothly.
+      const mid = (z0 + z1) / 2, half = (z1 - z0) / 2;
+      const cuts = [...zCuts(z0, mid), ...zCuts(mid, z1)].filter((z, i, a) => i === 0 || z !== a[i - 1]);
+      const topAt = (z: number) => h + rise * (1 - Math.abs(z - mid) / half);
+      for (let i = 0; i + 1 < cuts.length; i++) {
+        const za = cuts[i], zb = cuts[i + 1];
+        quadN(mb, [x0, h, za], [x0, h, zb], [x0, topAt(zb), zb], [x0, topAt(za), za], [-1, 0, 0], shadeHex(wall, 0.92));
+      }
       const roofC = rnd.pick([0x6d7b82, 0x9a4a35, 0x5c6b5a]);
       quadNSplit(mb, [x0 - 0.3, h, z1], [x0 + 16, h, z1], [x0 + 16, h + rise, (z0 + z1) / 2], [x0 - 0.3, h + rise, (z0 + z1) / 2], [0, w / 2, rise], roofC);
       quadNSplit(mb, [x0 - 0.3, h, z0], [x0 + 16, h, z0], [x0 + 16, h + rise, (z0 + z1) / 2], [x0 - 0.3, h + rise, (z0 + z1) / 2], [0, w / 2, -rise], shadeHex(roofC, 0.85));

@@ -465,6 +465,5 @@ export function propCatalogue(): Record<string, PropDef> {
     laundry: { build: () => laundry(r(14)), half: 2.0, reach: 0, shadow: false },
     boat0: { build: () => boat(0), half: 4, reach: 1.5, shadow: false },
     boat1: { build: () => boat(1), half: 5, reach: 1.5, shadow: false },
-    boat2: { build: () => boat(2), half: 3.5, reach: 1.5, shadow: false },
   };
 }

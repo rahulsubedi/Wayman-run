@@ -169,7 +169,7 @@ function fill(rnd: R, side: 1 | -1, zone: number, list: readonly (readonly [stri
 }
 
 /** Number of variants of each module family the library must provide. */
-export const VARIANTS = { ground: 3, backTown: 2, backNight: 2, backHarbor: 2, farTown: 2, farNight: 2, farHarbor: 2, farSea: 2, bunting: 2, flags: 2, lanterns: 2 };
+export const VARIANTS = { ground: 3, backTown: 2, backNight: 2, backHarbor: 2, farTown: 2, farNight: 2, farHarbor: 2, farSea: 2, bunting: 2, flags: 2, lanterns: 1 };
 
 export function chunkZone(index: number, offset: number, zoneLen: number, zoneCount: number): number {
   const z = Math.floor((index * CHUNK_LEN) / zoneLen) + offset;
@@ -221,9 +221,9 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
         items.push({ key: `b${zone}_${sg.v}`, x: side * FRONT_X, y: 0, u: uc, rot: side > 0 ? 0 : PI });
       } else if (quaySide) {
         // Quay opening: deck props, a palm, moored boats beyond the railing.
-        const boatKey = rnd.pick(['boat0', 'boat1', 'boat2']);
+        const boatKey = rnd.pick(['boat0', 'boat1', 'boat0']);
         anim.push({ key: boatKey, x: side * (QUAY_EDGE + 2.6), y: -1.25, u: uc + (rnd.next() - 0.5) * 2, rot: side > 0 ? 0 : PI, anim: 'bob', phase: rnd.next() * 6.28 });
-        if (sg.w >= 16) anim.push({ key: rnd.pick(['boat0', 'boat2']), x: side * (QUAY_EDGE + 7), y: -1.25, u: uc + rnd.next() * 3, rot: side > 0 ? PI : 0, anim: 'bob', phase: rnd.next() * 6.28 });
+        if (sg.w >= 16) anim.push({ key: rnd.pick(['boat0', 'boat0']), x: side * (QUAY_EDGE + 7), y: -1.25, u: uc + rnd.next() * 3, rot: side > 0 ? PI : 0, anim: 'bob', phase: rnd.next() * 6.28 });
         items.push({ key: 'palm', x: side * 10.5, y: SW_Y, u: u + 2.5, rot: side > 0 ? 0 : PI });
         items.push({ key: rnd.pick(['crates', 'barrels', 'nets']), x: side * 15, y: SW_Y, u: uc + 1, rot: side > 0 ? 0 : PI });
         if (sg.w >= 16) items.push({ key: 'barrels', x: side * 18, y: SW_Y, u: u + sg.w - 3, rot: side > 0 ? 0 : PI });
@@ -239,7 +239,7 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
   if (harbor) {
     for (let k = 0; k < 2; k++) {
       const u = 8 + k * 22 + rnd.next() * 10;
-      anim.push({ key: rnd.chance(0.6) ? 'boat1' : rnd.pick(['boat0', 'boat2']), x: -(QUAY_EDGE + 2.6), y: -1.25, u, rot: PI, anim: 'bob', phase: rnd.next() * 6.28 });
+      anim.push({ key: rnd.chance(0.6) ? 'boat1' : rnd.pick(['boat0', 'boat0']), x: -(QUAY_EDGE + 2.6), y: -1.25, u, rot: PI, anim: 'bob', phase: rnd.next() * 6.28 });
     }
   }
 

@@ -3,6 +3,7 @@ import { ZONE_COUNT, ZONE_LENGTH } from '../../sim/config';
 import { chunkZone, layoutChunk } from './layout';
 import { CHUNK_LEN, ROAD_CLEAR_X, ROAD_CLEAR_Y } from './layoutConst';
 import { lowTable, moduleDefs, widthTable } from './library';
+import { Z_MAX, zCuts } from './kit';
 
 const defs = moduleDefs();
 const arrays = new Map([...defs].map(([k, d]) => [k, d.build().toArrays()]));
@@ -86,5 +87,40 @@ describe('scenery budget', () => {
     const mods = [...arrays.keys()].map((k) => `${k}:${tri(k)}`).join(' ');
     console.log(report.join('\n') + '\n' + mods);
     expect(report.length).toBe(3);
+  });
+});
+
+describe('curved-world tessellation', () => {
+  // The bend moves vertices only, so every face that is long along the run direction (Z) must be
+  // cut into short pieces or it cuts corners / kinks at chunk joins.
+  const zExtent = (a: { positions: ArrayLike<number>; indices: ArrayLike<number> }, t: number) => {
+    let lo = Infinity, hi = -Infinity;
+    for (let j = 0; j < 3; j++) {
+      const z = a.positions[a.indices[t + j] * 3 + 2];
+      lo = Math.min(lo, z);
+      hi = Math.max(hi, z);
+    }
+    return hi - lo;
+  };
+
+  it('keeps no triangle of the ground, lot fill, quay or sea longer than Z_MAX along Z', () => {
+    for (const [k, a] of arrays) {
+      if (!(k.startsWith('ground') || k.startsWith('fill:') || k === 'sea')) continue;
+      for (let t = 0; t < a.indices.length; t += 3) expect(zExtent(a, t), `${k} triangle ${t / 3}`).toBeLessThanOrEqual(Z_MAX + 1e-6);
+    }
+  });
+
+  it('keeps backdrop rows and far hills in short Z pieces (island sphere and boats excepted)', () => {
+    for (const [k, a] of arrays) {
+      if (!(k.startsWith('bg:') || (k.startsWith('far:') && k !== 'far:sea:0'))) continue;
+      for (let t = 0; t < a.indices.length; t += 3) expect(zExtent(a, t), `${k} triangle ${t / 3}`).toBeLessThanOrEqual(Z_MAX + 1e-6);
+    }
+  });
+
+  it('cuts on a fixed grid so neighbouring pieces share vertex positions', () => {
+    expect(zCuts(-50, 0)).toEqual([-50, -43.75, -37.5, -31.25, -25, -18.75, -12.5, -6.25, 0]);
+    expect(zCuts(-3, -1)).toEqual([-3, -1]);
+    const c = zCuts(-37.3, -2.2);
+    for (let i = 0; i + 1 < c.length; i++) expect(c[i + 1] - c[i]).toBeLessThanOrEqual(Z_MAX);
   });
 });

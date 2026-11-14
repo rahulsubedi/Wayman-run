@@ -33,11 +33,11 @@ const CHUNK_COUNT = 8;
  */
 const DETAIL_AHEAD = 100;
 /**
- * Mid-size frontage (stalls, cafes, crates, boats...) is hidden beyond this distance: at 120 m+
+ * Mid-size frontage (stalls, cafes, crates, boats...) is hidden beyond this distance: at 110 m+
  * it is a few pixels in heavy fog, and dropping it keeps the next zone's stall kinds out of the
  * draw list while that zone is still far ahead.
  */
-const MEDIUM_AHEAD = 125;
+const MEDIUM_AHEAD = 110;
 /**
  * A chunk whose NEAR end is this far ahead is entirely beyond the fog's far plane and is not drawn
  * at all. The fog ends at 160-200 m depending on the zone (read live from the view's fog; this is
