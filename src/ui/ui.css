@@ -11,7 +11,8 @@
   --gold: #ffd23f;
   --red: #ff5d4d;
   --outline: 0 0.07em 0 var(--navy), 0.07em 0 0 var(--navy), -0.07em 0 0 var(--navy), 0 -0.07em 0 var(--navy), 0.05em 0.05em 0 var(--navy), -0.05em 0.05em 0 var(--navy), 0.05em -0.05em 0 var(--navy), -0.05em -0.05em 0 var(--navy);
-  --u: clamp(8px, min(2.8vw, 2.6vh), 14px);
+  /* 14px at 1280x720 and below, then grows with the viewport height (4K ~ 36px cap) */
+  --u: clamp(8px, min(2.8vw, 2.6vh, max(14px, 1.945vh)), 36px);
   font-size: var(--u);
   font-family: 'Avenir Next', 'Segoe UI', 'Helvetica Neue', system-ui, -apple-system, Roboto, Arial, sans-serif;
   font-weight: 800;
@@ -102,9 +103,12 @@
   padding-bottom: max(env(safe-area-inset-bottom), 1.2em);
   padding-left: max(env(safe-area-inset-left), 0.9em);
   padding-right: max(env(safe-area-inset-right), 0.9em);
-  background:
-    linear-gradient(180deg, rgba(8, 18, 40, 0.62) 0%, rgba(8, 18, 40, 0.18) 30%, rgba(8, 18, 40, 0) 44%, rgba(8, 18, 40, 0.5) 72%, rgba(8, 18, 40, 0.85) 100%);
+  /* only a thin top and bottom fade: the sunny scene stays bright; text has local scrims below */
+  background: linear-gradient(180deg, rgba(8, 18, 40, 0.3) 0%, rgba(8, 18, 40, 0) 20%, rgba(8, 18, 40, 0) 62%, rgba(8, 18, 40, 0.32) 100%);
 }
+.wr-menu-brand, .wr-menu-main, .wr-howto { position: relative; }
+.wr-tag::before { content: ''; position: absolute; z-index: -1; inset: -0.4em -1.2em; border-radius: 999px; background: radial-gradient(closest-side, rgba(8, 18, 40, 0.5), rgba(8, 18, 40, 0)); }
+.wr-tag { position: relative; z-index: 0; }
 .wr-menu-brand { text-align: center; animation: wr-drop 0.7s cubic-bezier(0.2, 1.3, 0.4, 1) both; }
 .wr-menu-main {
   margin-top: auto;
@@ -242,7 +246,7 @@
     justify-content: space-around;
     flex-wrap: nowrap;
     padding: max(env(safe-area-inset-top), 0.8em) max(env(safe-area-inset-right), 1.4em) max(env(safe-area-inset-bottom), 0.8em) max(env(safe-area-inset-left), 1.4em);
-    background: linear-gradient(90deg, rgba(8, 18, 40, 0.7) 0%, rgba(8, 18, 40, 0.25) 45%, rgba(8, 18, 40, 0.65) 100%);
+    background: linear-gradient(90deg, rgba(8, 18, 40, 0.34) 0%, rgba(8, 18, 40, 0) 40%, rgba(8, 18, 40, 0.3) 100%);
   }
   .wr-menu-brand { flex: 1 1 46%; }
   .wr-menu-main { margin-top: 0; flex: 0 1 44%; gap: 0.8em; }
@@ -276,6 +280,7 @@
 }
 .wr-pill .wr-ico-wrap { width: 1.25em; height: 1.25em; }
 .wr-coin-num { min-width: 1.5em; text-align: right; flex: 1; }
+.wr-coinpill { will-change: transform; transform-origin: 50% 50%; backface-visibility: hidden; }
 .wr-bump-a { animation: wr-bump-a 0.28s ease-out; }
 .wr-bump-b { animation: wr-bump-b 0.28s ease-out; }
 @keyframes wr-bump-a { 30% { transform: scale(1.18); } }
@@ -342,14 +347,15 @@
 @media (orientation: landscape) and (max-height: 520px) {
   .wr-hud { position: absolute; }
   .wr-chips { position: absolute; left: max(env(safe-area-inset-left), 0.8em); top: calc(max(env(safe-area-inset-top), 0.7em) + 4.3em); flex-direction: column; align-items: flex-start; gap: 0.4em; margin: 0; font-size: 0.85em; }
-  .wr-toast { top: 30%; }
-  .wr-popup { top: 50%; }
-  .wr-popup:nth-child(2), .wr-popup:nth-child(3) { top: 54%; }
-  .wr-popup:nth-child(4) { top: 46%; }
+  .wr-ui .wr-feed { position: absolute; left: 0; right: 0; top: calc(max(env(safe-area-inset-top), 0.7em) + 7.4em); margin: 0; }
+  .wr-ui .wr-toast-text { font-size: 2em; }
+  .wr-ui .wr-popups { top: 5.3em; height: 4em; }
+  .wr-ui .wr-popup { font-size: 1.7em; }
+  .wr-ui .wr-popup:nth-child(2) { font-size: 1.5em; top: 1.65em; }
 }
 
 /* ------------------------------------------------------------ panels / pause */
-.wr-dim { align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(8, 16, 34, 0.45), rgba(8, 16, 34, 0.78)); }
+.wr-dim { align-items: center; justify-content: center; background: radial-gradient(ellipse at center, rgba(8, 16, 34, 0.22), rgba(8, 16, 34, 0.5)); }
 .wr-panel {
   position: relative;
   display: flex;
@@ -416,7 +422,7 @@
 @keyframes wr-badge { from { transform: scale(0) rotate(-30deg); opacity: 0; } 70% { transform: scale(1.2) rotate(-6deg); } to { transform: scale(1) rotate(-3deg); opacity: 1; } }
 @keyframes wr-glow-gold { 50% { box-shadow: 0 0.12em 0 #b57400, 0 0 1.8em 0.5em rgba(255, 210, 63, 0.8); } }
 
-.wr-confetti { position: absolute; inset: 0; overflow: hidden; pointer-events: none; display: none; }
+.wr-confetti { --rx: calc(min(100vw, 100%) * 0.44); --ry: min(30vh, 70vw); position: absolute; inset: 0; overflow: hidden; pointer-events: none; display: none; }
 .wr-confetti.wr-on { display: block; }
 .wr-confetti i {
   position: absolute;
@@ -432,8 +438,8 @@
 }
 @keyframes wr-confetti {
   0% { transform: translate(0, 0) rotate(0) scale(0.4); opacity: 1; }
-  45% { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(1); opacity: 1; }
-  100% { transform: translate(var(--dx), calc(var(--dy) + 26vmin)) rotate(calc(var(--rot) * 1.6)) scale(1); opacity: 0; }
+  45% { transform: translate(calc(var(--fx) * var(--rx)), calc(var(--fy) * var(--ry))) rotate(var(--rot)) scale(1); opacity: 1; }
+  100% { transform: translate(calc(var(--fx) * var(--rx)), calc(var(--fy) * var(--ry) + 0.3 * var(--ry))) rotate(calc(var(--rot) * 1.6)) scale(1); opacity: 0; }
 }
 
 @media (orientation: landscape) and (max-height: 520px) {
@@ -466,7 +472,7 @@
 /* ------------------------------------------------------------- toast / popups */
 .wr-toast {
   position: absolute;
-  top: 19%;
+  top: 0;
   left: 50%;
   display: flex;
   align-items: center;
@@ -497,11 +503,13 @@
 @keyframes wr-toast-a { 0% { opacity: 0; transform: translate(-50%, -1.2em) scale(0.8); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.05); } 18% { transform: translate(-50%, 0) scale(1); } 82% { opacity: 1; transform: translate(-50%, 0) scale(1); } 100% { opacity: 0; transform: translate(-50%, -0.8em) scale(0.95); } }
 @keyframes wr-toast-b { 0% { opacity: 0; transform: translate(-50%, -1.2em) scale(0.8); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1.05); } 18% { transform: translate(-50%, 0) scale(1); } 82% { opacity: 1; transform: translate(-50%, 0) scale(1); } 100% { opacity: 0; transform: translate(-50%, -0.8em) scale(0.95); } }
 
-.wr-popups { position: absolute; inset: 0; pointer-events: none; }
+.wr-feed { position: relative; height: 0; flex: none; margin-top: 0.7em; pointer-events: none; }
+.wr-popups { position: absolute; left: 0; right: 0; top: 6em; height: 5.6em; pointer-events: none; }
 .wr-popup {
   position: absolute;
   left: 50%;
-  top: 36%;
+  top: 0;
+  max-width: 96%;
   opacity: 0;
   white-space: nowrap;
   font-size: 2.1em;
@@ -512,15 +520,17 @@
   color: #fff;
   text-shadow: var(--outline), 0 0.2em 0.4em rgba(0, 0, 0, 0.4);
 }
-.wr-popup:nth-child(2) { left: 38%; top: 40%; }
-.wr-popup:nth-child(3) { left: 62%; top: 40%; }
-.wr-popup:nth-child(4) { top: 32%; }
+.wr-popup:nth-child(2) { top: 1.5em; font-size: 1.85em; }
+@media (max-width: 460px) { .wr-ui .wr-popup { font-size: 1.7em; } .wr-ui .wr-popup:nth-child(2) { font-size: 1.5em; top: 1.85em; } }
+.wr-ui[data-screen='pause'] .wr-popups, .wr-ui[data-screen='pause'] .wr-toast,
+.wr-ui[data-screen='gameover'] .wr-popups, .wr-ui[data-screen='gameover'] .wr-toast,
+.wr-ui[data-screen='menu'] .wr-popups, .wr-ui[data-screen='menu'] .wr-toast { display: none; }
 .wr-pop-good { color: var(--gold); }
 .wr-pop-great { color: var(--teal-l); }
 .wr-pop-info { color: var(--cream); }
 .wr-pop-danger { color: var(--red); }
 .wr-go { animation: wr-popup 0.95s cubic-bezier(0.2, 1, 0.4, 1) both; }
-@keyframes wr-popup { 0% { opacity: 0; transform: translate(-50%, 0.6em) scale(0.6); } 18% { opacity: 1; transform: translate(-50%, 0) scale(1.15); } 30% { transform: translate(-50%, -0.1em) scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -1.8em) scale(1); } }
+@keyframes wr-popup { 0% { opacity: 0; transform: translate(-50%, 0.6em) scale(0.6); } 18% { opacity: 1; transform: translate(-50%, 0) scale(1.15); } 30% { transform: translate(-50%, -0.1em) scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -0.9em) scale(1); } }
 
 /* --------------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
