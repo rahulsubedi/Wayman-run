@@ -12,13 +12,14 @@ import { propCatalogue } from './props';
 export interface ModuleDef {
   build: () => MeshBuilder;
   shadow: boolean;
-  /** Small street clutter: hidden in chunks far ahead (tiny + fogged there) to save draws. */
-  small?: boolean;
+  /** Distance tier: 1 = small street clutter, 2 = mid-size frontage; hidden in chunks far ahead (tiny + fogged there) to save draws. */
+  tier?: 1 | 2;
   /** 'water' uses the glossy sea material; everything else the shared scenery material. */
   material: 'main' | 'water';
 }
 
-const SMALL = new Set(['bin', 'hydrant', 'bollards', 'scooter', 'scooterRed', 'bicycle', 'signpost', 'pots', 'bench', 'laundry', 'hedge', 'planter', 'barrels', 'nets']);
+const MEDIUM = new Set(['cafe', 'cafeNight', 'stall', 'stallNight', 'foodStall', 'crates', 'palm', 'boat0', 'boat1']);
+const SMALL = new Set(['bin', 'hydrant', 'bollards', 'scooter', 'bicycle', 'signpost', 'pots', 'bench', 'laundry', 'hedge', 'planter', 'barrels', 'nets']);
 
 export function moduleDefs(): Map<string, ModuleDef> {
   const m = new Map<string, ModuleDef>();
@@ -32,19 +33,18 @@ export function moduleDefs(): Map<string, ModuleDef> {
     zoneSpecs(z).forEach((spec, i) => add(`b${z}_${i}`, () => buildBuilding(spec, zoneWalls(z))));
     add(`gate${z}`, () => buildGate(z), true);
   }
-  for (let v = 0; v < VARIANTS.backTown; v++) add(`back:town:${v}`, () => buildBackRow('town', v));
-  for (let v = 0; v < VARIANTS.backNight; v++) add(`back:night:${v}`, () => buildBackRow('night', v));
-  for (let v = 0; v < VARIANTS.backHarbor; v++) add(`back:harbor:${v}`, () => buildBackRow('harbor', v));
-  for (let v = 0; v < VARIANTS.farTown; v++) add(`far:town:${v}`, () => buildFar('town', v));
-  for (let v = 0; v < VARIANTS.farNight; v++) add(`far:night:${v}`, () => buildFar('night', v));
-  for (let v = 0; v < VARIANTS.farHarbor; v++) add(`far:harbor:${v}`, () => buildFar('harbor', v));
+  // Rear building row + far hills merged into one module per variant (one draw per side).
+  for (const kind of ['town', 'night', 'harbor'] as const) {
+    for (let v = 0; v < 2; v++) add(`bg:${kind}:${v}`, () => buildBackRow(kind, v).merge(buildFar(kind, v)));
+  }
   for (let v = 0; v < VARIANTS.farSea; v++) add(`far:sea:${v}`, () => buildFar('sea', v));
   for (let v = 0; v < VARIANTS.bunting; v++) add(`bunting${v}`, () => buildBunting(v, false));
   for (let v = 0; v < VARIANTS.flags; v++) add(`flags${v}`, () => buildBunting(10 + v, true));
   for (let v = 0; v < VARIANTS.lanterns; v++) add(`lanterns${v}`, () => buildLanterns(v));
   for (const [key, def] of Object.entries(propCatalogue())) {
     add(key, def.build, def.shadow);
-    if (SMALL.has(key)) m.get(key)!.small = true;
+    if (SMALL.has(key)) m.get(key)!.tier = 1;
+    else if (MEDIUM.has(key)) m.get(key)!.tier = 2;
   }
   return m;
 }

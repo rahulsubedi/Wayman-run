@@ -27,6 +27,28 @@ export const ALL = 63;
 
 type V3 = [number, number, number];
 
+/**
+ * Curved-world tessellation. The world bend moves vertices only, so a face stays a straight chord
+ * between its vertices: anything long along the run direction (Z) must be cut into short pieces to
+ * follow the curve. Pieces are cut on a fixed grid (every `Z_SEG` metres of |z| in the module's
+ * own frame, which for every chunk-length module is the chunk frame), so neighbouring pieces of
+ * different modules and chunks put their vertices at the same z and cannot open T-junction cracks.
+ */
+export const Z_SEG = 6.25;
+/** Longest allowed run-direction extent of a tessellated face. */
+export const Z_MAX = 6.5;
+
+/** Cut positions (ascending) covering [a, b] (any order): the ends plus every grid line inside. */
+export function zCuts(a: number, b: number): number[] {
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  const out = [lo];
+  if (hi - lo > Z_MAX) {
+    for (let k = Math.ceil((lo + 0.2) / Z_SEG); k * Z_SEG < hi - 0.2; k++) out.push(k * Z_SEG);
+  }
+  out.push(hi);
+  return out;
+}
+
 function quadToward(mb: MeshBuilder, a: V3, b: V3, c: V3, d: V3, n: V3, paint?: PaintInput): void {
   // Orient a planar quad so its winding (CCW from the front) faces along n.
   const ux = c[0] - a[0], uy = c[1] - a[1], uz = c[2] - a[2];
@@ -45,6 +67,8 @@ export function slab(
   x0: number, y0: number, z0: number, x1: number, y1: number, z1: number,
   paint: PaintInput,
   faces = ALL & ~NY,
+  /** Cut the long (PX/NX/PY/NY) faces along Z on the tessellation grid (curved world). */
+  split = false,
 ): void {
   if (x0 > x1) [x0, x1] = [x1, x0];
   if (y0 > y1) [y0, y1] = [y1, y0];
@@ -55,27 +79,52 @@ export function slab(
   const p: Paint = typeof paint === 'number' ? { color: paint } : paint;
   const topP: Paint = { ...p, color: p.top ?? p.color, bottom: undefined, top: undefined };
   const botP: Paint = { ...p, color: p.bottom ?? p.color, bottom: undefined, top: undefined };
-  if (faces & PX) quadToward(mb, [x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0], [1, 0, 0], p);
-  if (faces & NX) quadToward(mb, [x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], [-1, 0, 0], p);
+  const cuts = split ? zCuts(z0, z1) : [z0, z1];
+  for (let i = 0; i + 1 < cuts.length; i++) {
+    const za = cuts[i], zb = cuts[i + 1];
+    if (faces & PX) quadToward(mb, [x1, y0, za], [x1, y0, zb], [x1, y1, zb], [x1, y1, za], [1, 0, 0], p);
+    if (faces & NX) quadToward(mb, [x0, y0, za], [x0, y0, zb], [x0, y1, zb], [x0, y1, za], [-1, 0, 0], p);
+    if (faces & PY) quadToward(mb, [x0, y1, za], [x1, y1, za], [x1, y1, zb], [x0, y1, zb], [0, 1, 0], topP);
+    if (faces & NY) quadToward(mb, [x0, y0, za], [x1, y0, za], [x1, y0, zb], [x0, y0, zb], [0, -1, 0], botP);
+  }
   if (faces & PZ) quadToward(mb, [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], [0, 0, 1], p);
   if (faces & NZ) quadToward(mb, [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0], [0, 0, -1], p);
-  if (faces & PY) quadToward(mb, [x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], [0, 1, 0], topP);
-  if (faces & NY) quadToward(mb, [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], [0, -1, 0], botP);
 }
 
-/** Flat rectangle in the plane x = const facing -X (toward the street for a right-side facade). */
+/** Flat rectangle in the plane x = const facing -X (toward the street for a right-side facade). Cut along Z. */
 export function panelNX(mb: MeshBuilder, x: number, y0: number, z0: number, y1: number, z1: number, paint: PaintInput): void {
-  quadToward(mb, [x, y0, z0], [x, y0, z1], [x, y1, z1], [x, y1, z0], [-1, 0, 0], paint);
+  const c = zCuts(z0, z1);
+  for (let i = 0; i + 1 < c.length; i++) quadToward(mb, [x, y0, c[i]], [x, y0, c[i + 1]], [x, y1, c[i + 1]], [x, y1, c[i]], [-1, 0, 0], paint);
 }
 
-/** Flat horizontal rectangle facing +Y. */
+/** Flat horizontal rectangle facing +Y. Cut along Z on the tessellation grid when long. */
 export function panelPY(mb: MeshBuilder, x0: number, z0: number, x1: number, z1: number, y: number, paint: PaintInput): void {
-  quadToward(mb, [x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1], [0, 1, 0], paint);
+  const c = zCuts(z0, z1);
+  for (let i = 0; i + 1 < c.length; i++) quadToward(mb, [x0, y, c[i]], [x1, y, c[i]], [x1, y, c[i + 1]], [x0, y, c[i + 1]], [0, 1, 0], paint);
 }
 
 /** Generic oriented quad (any plane), front along n. */
 export function quadN(mb: MeshBuilder, a: V3, b: V3, c: V3, d: V3, n: V3, paint: PaintInput): void {
   quadToward(mb, a, b, c, d, n, paint);
+}
+
+/**
+ * Like `quadN` but cut into pieces of at most ~`Z_SEG` along the run direction, by bilinear
+ * interpolation of the quad (for sloped roofs and hill faces). The pair of opposite edges that
+ * spans more Z is the one that gets divided; short quads pass through unchanged.
+ */
+export function quadNSplit(mb: MeshBuilder, a: V3, b: V3, c: V3, d: V3, n: V3, paint: PaintInput): void {
+  const spanAB = Math.max(Math.abs(b[2] - a[2]), Math.abs(c[2] - d[2]));
+  const spanAD = Math.max(Math.abs(d[2] - a[2]), Math.abs(c[2] - b[2]));
+  const along = spanAB >= spanAD;
+  const cnt = Math.max(1, Math.ceil((along ? spanAB : spanAD) / Z_MAX));
+  if (cnt === 1) return quadToward(mb, a, b, c, d, n, paint);
+  const lerp = (p: V3, q: V3, t: number): V3 => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
+  for (let i = 0; i < cnt; i++) {
+    const t0 = i / cnt, t1 = (i + 1) / cnt;
+    if (along) quadToward(mb, lerp(a, b, t0), lerp(a, b, t1), lerp(d, c, t1), lerp(d, c, t0), n, paint);
+    else quadToward(mb, lerp(a, d, t0), lerp(b, c, t0), lerp(b, c, t1), lerp(a, d, t1), n, paint);
+  }
 }
 
 /** A thin straight bar between two points (square section `t`), for rails, ropes, strings. */

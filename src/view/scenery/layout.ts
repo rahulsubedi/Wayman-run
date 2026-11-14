@@ -123,9 +123,9 @@ const FRONTAGE: Record<number, readonly (readonly [string, number])[]> = {
   2: [['foodStall', 4], ['cafeNight', 2.5], ['stallNight', 2], ['pots', 1.5], ['crates', 1], ['bench', 1]],
 };
 const CURB: Record<number, readonly (readonly [string, number])[]> = {
-  0: [['bin', 2], ['hydrant', 1], ['bollards', 1.5], ['scooter', 1.5], ['scooterRed', 1], ['signpost', 1], ['bicycle', 1]],
+  0: [['bin', 2], ['hydrant', 1], ['bollards', 1.5], ['scooter', 2.5], ['signpost', 1], ['bicycle', 1]],
   1: [['bollards', 2], ['bin', 1.5], ['hydrant', 1], ['signpost', 1], ['scooter', 1]],
-  2: [['scooter', 2], ['scooterRed', 1.5], ['bin', 1], ['bollards', 1], ['bicycle', 1]],
+  2: [['scooter', 3.5], ['bin', 1], ['bollards', 1], ['bicycle', 1]],
 };
 /** Half-length along the street and frontage x per prop (right-side frame). */
 export const PROP_SLOT: Record<string, { half: number; x: number }> = {
@@ -146,7 +146,6 @@ export const PROP_SLOT: Record<string, { half: number; x: number }> = {
   hydrant: { half: 0.3, x: 5.2 },
   bollards: { half: 1.6, x: 5.05 },
   scooter: { half: 0.95, x: 5.4 },
-  scooterRed: { half: 0.95, x: 5.4 },
   signpost: { half: 1.0, x: 5.3 },
 };
 
@@ -170,10 +169,11 @@ function fill(rnd: R, side: 1 | -1, zone: number, list: readonly (readonly [stri
 }
 
 /** Number of variants of each module family the library must provide. */
-export const VARIANTS = { ground: 3, backTown: 2, backNight: 2, backHarbor: 2, farTown: 2, farNight: 2, farHarbor: 2, farSea: 3, bunting: 3, flags: 2, lanterns: 3 };
+export const VARIANTS = { ground: 3, backTown: 2, backNight: 2, backHarbor: 2, farTown: 2, farNight: 2, farHarbor: 2, farSea: 2, bunting: 2, flags: 2, lanterns: 1 };
 
 export function chunkZone(index: number, offset: number, zoneLen: number, zoneCount: number): number {
-  const z = Math.floor((index * CHUNK_LEN) / zoneLen) + offset;
+  // Chunks behind the start line (negative index) belong to the same zone as the first chunk.
+  const z = Math.floor((Math.max(0, index) * CHUNK_LEN) / zoneLen) + offset;
   return ((z % zoneCount) + zoneCount) % zoneCount;
 }
 
@@ -222,9 +222,9 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
         items.push({ key: `b${zone}_${sg.v}`, x: side * FRONT_X, y: 0, u: uc, rot: side > 0 ? 0 : PI });
       } else if (quaySide) {
         // Quay opening: deck props, a palm, moored boats beyond the railing.
-        const boatKey = rnd.pick(['boat0', 'boat1', 'boat2']);
+        const boatKey = rnd.pick(['boat0', 'boat1', 'boat0']);
         anim.push({ key: boatKey, x: side * (QUAY_EDGE + 2.6), y: -1.25, u: uc + (rnd.next() - 0.5) * 2, rot: side > 0 ? 0 : PI, anim: 'bob', phase: rnd.next() * 6.28 });
-        if (sg.w >= 16) anim.push({ key: rnd.pick(['boat0', 'boat2']), x: side * (QUAY_EDGE + 7), y: -1.25, u: uc + rnd.next() * 3, rot: side > 0 ? PI : 0, anim: 'bob', phase: rnd.next() * 6.28 });
+        if (sg.w >= 16) anim.push({ key: rnd.pick(['boat0', 'boat0']), x: side * (QUAY_EDGE + 7), y: -1.25, u: uc + rnd.next() * 3, rot: side > 0 ? PI : 0, anim: 'bob', phase: rnd.next() * 6.28 });
         items.push({ key: 'palm', x: side * 10.5, y: SW_Y, u: u + 2.5, rot: side > 0 ? 0 : PI });
         items.push({ key: rnd.pick(['crates', 'barrels', 'nets']), x: side * 15, y: SW_Y, u: uc + 1, rot: side > 0 ? 0 : PI });
         if (sg.w >= 16) items.push({ key: 'barrels', x: side * 18, y: SW_Y, u: u + sg.w - 3, rot: side > 0 ? 0 : PI });
@@ -240,7 +240,7 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
   if (harbor) {
     for (let k = 0; k < 2; k++) {
       const u = 8 + k * 22 + rnd.next() * 10;
-      anim.push({ key: rnd.chance(0.6) ? 'boat1' : rnd.pick(['boat0', 'boat2']), x: -(QUAY_EDGE + 2.6), y: -1.25, u, rot: PI, anim: 'bob', phase: rnd.next() * 6.28 });
+      anim.push({ key: rnd.chance(0.6) ? 'boat1' : rnd.pick(['boat0', 'boat0']), x: -(QUAY_EDGE + 2.6), y: -1.25, u, rot: PI, anim: 'bob', phase: rnd.next() * 6.28 });
     }
   }
 
@@ -249,13 +249,15 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
     const uu = side > 0 ? 0 : L;
     const rot = side > 0 ? 0 : PI;
     if (harbor && side < 0) {
-      items.push({ key: `far:sea:${((index % 3) + 3) % 3 === 0 ? 0 : 1 + rnd.int(2)}`, x: 0, y: 0, u: uu, rot });
+      items.push({ key: `far:sea:${((index % 3) + 3) % 3 === 0 ? 0 : (rnd.int(2), 1)}`, x: 0, y: 0, u: uu, rot });
       continue;
     }
-    const back = harbor ? `back:harbor:${rnd.int(VARIANTS.backHarbor)}` : night ? `back:night:${rnd.int(VARIANTS.backNight)}` : `back:town:${rnd.int(VARIANTS.backTown)}`;
-    items.push({ key: back, x: 0, y: 0, u: uu, rot });
-    const far = harbor ? `far:harbor:${rnd.int(2)}` : night ? `far:night:${rnd.int(2)}` : `far:town:${rnd.int(2)}`;
-    items.push({ key: far, x: 0, y: 0, u: uu, rot });
+    // One merged module per side carries the rear row AND the far hills (one draw, not two).
+    // Both variant draws are still consumed so the rest of the layout stays unchanged.
+    const kind = harbor ? 'harbor' : night ? 'night' : 'town';
+    const v = rnd.int(2);
+    rnd.int(2);
+    items.push({ key: `bg:${kind}:${v}`, x: 0, y: 0, u: uu, rot });
   }
 
   // ---- Sidewalk rhythm: lamps, trees, masts + strings.

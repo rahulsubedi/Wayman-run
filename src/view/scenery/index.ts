@@ -31,13 +31,26 @@ const CHUNK_COUNT = 8;
  * ahead. Beyond it those props are a few pixels tall inside thick fog; hiding them there keeps
  * the next zone's clutter kinds from adding draw calls while it is still on the horizon.
  */
-const DETAIL_AHEAD = 150;
+const DETAIL_AHEAD = 100;
+/**
+ * Mid-size frontage (stalls, cafes, crates, boats...) is hidden beyond this distance: at 110 m+
+ * it is a few pixels in heavy fog, and dropping it keeps the next zone's stall kinds out of the
+ * draw list while that zone is still far ahead.
+ */
+const MEDIUM_AHEAD = 110;
+/**
+ * A chunk whose NEAR end is this far ahead is entirely beyond the fog's far plane and is not drawn
+ * at all. The fog ends at 160-200 m depending on the zone (read live from the view's fog; this is
+ * the cap), the camera sits ~7 m behind the player, so the margin is the fog far + 12 m.
+ */
+const HIDE_AHEAD = 212;
 
 interface Module {
   geometry: Geometry3D;
   material: Material3D;
   shadow: boolean;
-  small: boolean;
+  /** 0 = always drawn, 1 = small clutter (DETAIL_AHEAD), 2 = mid-size frontage (MEDIUM_AHEAD). */
+  tier: 0 | 1 | 2;
   triangles: number;
 }
 
@@ -46,6 +59,7 @@ interface AnimSlot {
   kind: AnimKind;
   phase: number;
   baseY: number;
+  tier: number;
 }
 
 interface Chunk {
@@ -56,10 +70,12 @@ interface Chunk {
   /** Shadow-only unit boxes standing in for the detailed buildings in the shadow pass. */
   proxies: Mesh3D[];
   proxyCount: number;
-  /** Which static slots hold small clutter (toggled by distance). */
-  small: boolean[];
+  /** Distance tier of each static slot (see Module.tier). */
+  tier: number[];
   staticCount: number;
+  /** Chunk is close enough for small clutter / mid-size frontage / at all. */
   detail: boolean;
+  medium: boolean;
   anims: AnimSlot[];
   animCount: number;
 }
@@ -89,7 +105,7 @@ export class SceneryView {
     const water = waterMaterial();
     for (const [key, def] of moduleDefs()) {
       const mb = def.build();
-      this.modules.set(key, { geometry: mb.build(), material: def.material === 'water' ? water : main, shadow: def.shadow, small: !!def.small, triangles: mb.triangleCount });
+      this.modules.set(key, { geometry: mb.build(), material: def.material === 'water' ? water : main, shadow: def.shadow, tier: def.tier ?? 0, triangles: mb.triangleCount });
     }
 
     // ---- Size the per-chunk pools from a sweep of layouts across all zones.
@@ -110,9 +126,9 @@ export class SceneryView {
       for (let i = 0; i < maxStatic; i++) statics.push(new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }));
       const anims: AnimSlot[] = [];
       for (let i = 0; i < maxAnim; i++) {
-        anims.push({ mesh: new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }), kind: 'swing', phase: 0, baseY: 0 });
+        anims.push({ mesh: new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }), kind: 'swing', phase: 0, baseY: 0, tier: 0 });
       }
-      this.chunks.push({ node, index: Number.NaN, zone: -1, statics, proxies: [], proxyCount: 0, small: statics.map(() => false), staticCount: 0, detail: true, anims, animCount: 0 });
+      this.chunks.push({ node, index: Number.NaN, zone: -1, statics, proxies: [], proxyCount: 0, tier: statics.map(() => 0), staticCount: 0, detail: true, medium: true, anims, animCount: 0 });
     }
 
     stage.onRebase((dz) => {
@@ -168,17 +184,28 @@ export class SceneryView {
         }
       }
     }
+    const hide = Math.min(HIDE_AHEAD, (this.stage.view.fog?.far ?? HIDE_AHEAD) + 12);
     for (let c = 0; c < chunks.length; c++) {
       const ch = chunks[c];
-      const want = ch.index * CHUNK_LEN - playerS < DETAIL_AHEAD;
-      if (want !== ch.detail) this.setDetail(ch, want);
+      const ahead = ch.index * CHUNK_LEN - playerS;
+      ch.node.visible = ahead < hide;
+      const detail = ahead < DETAIL_AHEAD, medium = ahead < MEDIUM_AHEAD;
+      if (detail !== ch.detail || medium !== ch.medium) this.setDetail(ch, detail, medium);
     }
     this.animate();
   }
 
-  private setDetail(ch: Chunk, on: boolean): void {
-    ch.detail = on;
-    for (let i = 0; i < ch.staticCount; i++) if (ch.small[i]) ch.statics[i].visible = on;
+  private setDetail(ch: Chunk, detail: boolean, medium: boolean): void {
+    ch.detail = detail;
+    ch.medium = medium;
+    for (let i = 0; i < ch.staticCount; i++) {
+      const t = ch.tier[i];
+      if (t) ch.statics[i].visible = t === 1 ? detail : medium;
+    }
+    for (let i = 0; i < ch.animCount; i++) {
+      const t = ch.anims[i].tier;
+      if (t) ch.anims[i].mesh.visible = t === 1 ? detail : medium;
+    }
   }
 
   // ------------------------------------------------------------------ internal
@@ -195,6 +222,8 @@ export class SceneryView {
     const lay = layoutChunk(index, zone, this.widths, this.low);
     ch.zone = zone;
     ch.detail = index * CHUNK_LEN - this.lastS < DETAIL_AHEAD;
+    ch.medium = index * CHUNK_LEN - this.lastS < MEDIUM_AHEAD;
+    ch.node.visible = index * CHUNK_LEN - this.lastS < HIDE_AHEAD;
     let n = 0;
     for (const it of lay.items) {
       const mod = this.modules.get(it.key);
@@ -205,8 +234,8 @@ export class SceneryView {
       if (m.castShadow !== mod.shadow) m.castShadow = mod.shadow;
       m.position.set(it.x, it.y, -it.u);
       m.rotation.y = it.rot;
-      ch.small[n - 1] = mod.small;
-      m.visible = !mod.small || ch.detail;
+      ch.tier[n - 1] = mod.tier;
+      m.visible = mod.tier === 0 || (mod.tier === 1 ? ch.detail : ch.medium);
     }
     ch.staticCount = n;
     for (let i = n; i < ch.statics.length; i++) ch.statics[i].visible = false;
@@ -240,7 +269,8 @@ export class SceneryView {
       slot.kind = it.anim;
       slot.phase = it.phase;
       slot.baseY = it.y;
-      slot.mesh.visible = true;
+      slot.tier = mod.tier;
+      slot.mesh.visible = mod.tier === 0 || (mod.tier === 1 ? ch.detail : ch.medium);
     }
     for (let i = a; i < ch.anims.length; i++) ch.anims[i].mesh.visible = false;
     ch.animCount = a;
