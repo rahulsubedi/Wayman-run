@@ -450,7 +450,6 @@ export function propCatalogue(): Record<string, PropDef> {
     hydrant: { build: hydrant, half: 0.3, reach: 0.4, shadow: false },
     bollards: { build: bollards, half: 1.5, reach: 0.15, shadow: false },
     scooter: { build: () => scooter(0x7fd1b9), half: 0.9, reach: 0.45, shadow: false },
-    scooterRed: { build: () => scooter(0xe76f51), half: 0.9, reach: 0.45, shadow: false },
     bicycle: { build: () => bicycle(0x3c7fa6), half: 0.95, reach: 0.35, shadow: false },
     cafe: { build: () => cafeSet(r(8), false), half: 1.3, reach: 1.35, shadow: false },
     cafeNight: { build: () => cafeSet(r(9), true), half: 1.3, reach: 1.35, shadow: false },

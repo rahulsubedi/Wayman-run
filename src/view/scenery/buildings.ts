@@ -516,7 +516,6 @@ const MARKET_ROWS: Row[] = [
   [10, 2, 'cafe', 'balcony', 'tile'],
   [6, 4, 'shop', 'boxes', 'hip'],
   [12, 3, 'arcade', 'arched', 'terrace'],
-  [8, 2, 'shop', 'shutters', 'tile', { blade: true }],
   [10, 4, 'shop', 'balcony', 'parapet', { setback: true }],
   [6, 3, 'cafe', 'arched', 'tile'],
   [12, 2, 'shop', 'boxes', 'parapet'],
@@ -524,7 +523,6 @@ const MARKET_ROWS: Row[] = [
   [10, 3, 'arcade', 'shutters', 'hip'],
   [6, 2, 'house', 'boxes', 'terrace'],
   [12, 4, 'cafe', 'balcony', 'tile'],
-  [8, 3, 'house', 'shutters', 'parapet'],
   [10, 3, 'shop', 'arched', 'tower'],
 ];
 
@@ -541,8 +539,6 @@ const NIGHT_ROWS: Row[] = [
   [10, 3, 'cafe', 'balcony', 'parapet', { setback: true }],
   [6, 2, 'shop', 'arched', 'tile', { blade: true }],
   [12, 4, 'arcade', 'shutters', 'tower'],
-  [8, 3, 'house', 'boxes', 'hip'],
-  [10, 2, 'shop', 'shutters', 'parapet', { awning: false }],
 ];
 
 const HARBOR_ROWS: Row[] = [
@@ -556,9 +552,7 @@ const HARBOR_ROWS: Row[] = [
   [12, 1, 'shed', 'shutters', 'shedroof', { band: true }],
   [6, 2, 'warehouse', 'industrial', 'gable'],
   [10, 4, 'cafe', 'balcony', 'parapet'],
-  [8, 2, 'warehouse', 'industrial', 'gable', { band: true }],
   [12, 3, 'warehouse', 'industrial', 'parapet'],
-  [10, 2, 'cafe', 'shutters', 'tile'],
   [6, 4, 'house', 'shutters', 'parapet'],
 ];
 

@@ -109,7 +109,7 @@ export function buildFar(kind: 'town' | 'night' | 'harbor' | 'sea', variant: num
       mb.push().translate(x - 8, 22.2, z).cylinder(1.4, 2.4, 8, {}, glowPaint(0xfff2c0, 0.6)).pop();
       mb.push().translate(x - 8, 24.2, z).cone(1.7, 1.8, 8, 0x2a3a40).pop();
     }
-    for (let k = 0; k < 2; k++) {
+    for (let k = 0; k < (variant === 0 ? 2 : 4); k++) {
       const x = rnd.range(60, 110), z = -rnd.range(5, 45);
       quadN(mb, [x, -1.2, z], [x, -1.2, z - 4], [x, 7, z - 2], [x, 7, z - 2], [-1, 0, 0], 0xf4efe6);
       slab(mb, x - 1, -1.3, z - 4.5, x + 1, -0.5, z + 0.5, 0xe9e4d8, ALLS);
