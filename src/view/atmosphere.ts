@@ -101,6 +101,12 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+/**
+ * Fog distance scale per quality tier. Lower tiers draw less of the street (SceneryView reads the
+ * fog's far plane and its own shorter prop reach), so the fog closes in to keep the cut invisible.
+ */
+const FOG_SCALE: Record<Quality, number> = { low: 0.8, medium: 0.9, high: 1 };
+
 export class Atmosphere {
   readonly sun: DirectionalLight;
   /** Shadowless fill (see ZonePalette.fillColor). */
@@ -147,7 +153,10 @@ export class Atmosphere {
     this.skyState = { ...p0.sky, haze: p0.fogColor };
 
     stage.onBeforeRender(() => this.placeShadowBox());
-    stage.onQualityChange((_q: Quality, _s: Readonly<QualitySettings>) => this.placeShadowBox());
+    stage.onQualityChange((_q: Quality, _s: Readonly<QualitySettings>) => {
+      this.placeShadowBox();
+      this.lastZone = -1; // re-apply the fog for the new tier on the next update
+    });
     this.update(0, 0, 0);
   }
 
@@ -184,8 +193,9 @@ export class Atmosphere {
 
     const fogColor = mixHex(a.fogColor, b.fogColor, t);
     this.fog.color = fogColor;
-    this.fog.near = lerp(a.fogNear, b.fogNear, t);
-    this.fog.far = lerp(a.fogFar, b.fogFar, t);
+    const fs = FOG_SCALE[this.stage.quality];
+    this.fog.near = lerp(a.fogNear, b.fogNear, t) * fs;
+    this.fog.far = lerp(a.fogFar, b.fogFar, t) * fs;
     this.stage.view.background = fogColor;
 
     this.stage.view.exposure = lerp(a.exposure, b.exposure, t) * (1 + this.pulse * 0.15);
