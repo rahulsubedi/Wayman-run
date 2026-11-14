@@ -242,8 +242,26 @@ function truck(v: number): ObstacleBuilders {
   }
   // Rear: roll-up door ribs, reflective tape, tail lights, plate.
   const rz = zr - 0.1 + 0.005;
-  for (let i = 0; i < 9; i++) endRect(mb, 1, rz, -0.9, 0.9, 0.85 + i * 0.2, 0.87 + i * 0.2, shadeHex(L.box, 0.82));
-  endRect(mb, 1, rz, -0.06, 0.06, 0.75, 0.92, 0x3a414c); // handle
+  // Twin swing doors: recessed frame, centre seam, panel insets, four locking bars with cam
+  // keepers and handles, hinges on the outer edges, a door logo plate.
+  const dark = shadeHex(L.box, 0.7), mid = shadeHex(L.box, 0.88);
+  endRect(mb, 1, rz, -0.95, 0.95, 0.78, 0.84, dark);
+  endRect(mb, 1, rz, -0.95, 0.95, ROOF - 0.3, ROOF - 0.24, dark);
+  endRect(mb, 1, rz, -0.015, 0.015, 0.84, ROOF - 0.3, 0x2b3038);
+  for (const s of [-1, 1]) {
+    endRect(mb, 1, rz, s * 0.1 - 0.35, s * 0.1 + 0.35 * 1, 1.3, 1.95, mid);
+    endRect(mb, 1, rz, s * 0.47 - 0.33, s * 0.47 + 0.33, 2.02, ROOF - 0.4, mid);
+    for (const x of [s * 0.3, s * 0.72]) {
+      endRect(mb, 1, rz + 0.012, x - 0.025, x + 0.025, 0.86, ROOF - 0.32, C.steelLight); // locking bar
+      endRect(mb, 1, rz + 0.016, x - 0.04, x + 0.04, 0.86, 0.92, C.steel); // cam keepers
+      endRect(mb, 1, rz + 0.016, x - 0.04, x + 0.04, ROOF - 0.38, ROOF - 0.32, C.steel);
+      endRect(mb, 1, rz + 0.02, x - 0.03, x + 0.11 * s, 1.4, 1.46, 0x2b3038); // handle
+    }
+    for (const y of [1.0, 1.75, 2.5]) endRect(mb, 1, rz + 0.012, s * 0.93 - 0.05, s * 0.93 + 0.03 * s, y, y + 0.12, 0x2b3038); // hinges
+  }
+  // Courier-style door plate: emblem on a pale panel (left door).
+  endRect(mb, 1, rz + 0.008, -0.62, -0.14, 2.1, 2.36, 0xf4f1e8);
+  endRect(mb, 1, rz + 0.01, -0.58, -0.18, 2.2, 2.26, L.stripe === 0xffffff ? 0xff7a2f : L.stripe);
   endRect(mb, 1, rz + 0.001, -HW + 0.06, HW - 0.06, 0.95, 1.18, L.stripe === 0xffffff ? 0xff7a2f : L.stripe);
   endRect(mb, 1, rz + 0.001, -HW + 0.06, HW - 0.06, 2.42, 2.52, L.cab);
   diagonalStripes(mb, -HW + 0.06, HW - 0.06, 0.62, 0.74, rz + 0.002, C.red, 0.24, 1, 1);
@@ -272,6 +290,7 @@ function bus(L: BusLivery, seed: number, oncoming: boolean): ObstacleBuilders {
   const mb = new MeshBuilder({ seed, jitter: 0.025 });
   const glass = new MeshBuilder({ seed: seed + 1 });
   const glow = new MeshBuilder({ seed: seed + 2 });
+  const night = new MeshBuilder({ seed: seed + 3 });
   const y0 = 0.42, yBelt = 1.3, yWin1 = 2.22, yTop = ROOF - 0.05;
 
   // Body: lower skirt, window belt, upper band; corners chamfered.
@@ -292,7 +311,8 @@ function bus(L: BusLivery, seed: number, oncoming: boolean): ObstacleBuilders {
   const doorZ = [zf + 0.45]; // front door just behind the windshield
   const midDoor = 0.4;
   for (const s of [-1, 1]) {
-    sideRect(mb, s, yBelt + 0.06, yWin1, winZ0 - 0.05, winZ1 + 0.05, GLASS_DARK);
+    sideRect(night, s, yBelt + 0.06, yWin1, winZ0 - 0.05, winZ1 + 0.05, 0x4a3e30);
+    sideRect(night, s, yWin1 - 0.12, yWin1 - 0.04, winZ0, winZ1, 0x8a7656, 0.002);
     const step = (winZ1 - winZ0) / nWin;
     for (let i = 0; i < nWin; i++) {
       const a = winZ0 + i * step + 0.05, b = winZ0 + (i + 1) * step - 0.05;
@@ -340,8 +360,15 @@ function bus(L: BusLivery, seed: number, oncoming: boolean): ObstacleBuilders {
 
   // Rear: window, engine grille, tail lights, plate.
   const rz = zr - 0.005;
-  endRect(mb, 1, rz, -0.8, 0.8, 1.75, 2.4, GLASS_DARK);
+  // Interior seen through the rear window: night-lit (warm ceiling light, seat backs below).
+  endRect(night, 1, rz, -0.8, 0.8, 1.75, 2.4, 0x5a4a38);
+  endRect(night, 1, rz + 0.002, -0.78, 0.78, 2.28, 2.36, 0x9a8460);
+  for (const x of [-0.5, 0.0, 0.5]) endRect(mb, 1, rz + 0.003, x - 0.17, x + 0.17, 1.75, 1.98, 0x2a3440);
   endGlint(mb, 1, rz, -0.8, 0.8, 1.75, 2.4);
+  // Route number board above the window (always lit, amber LEDs).
+  endRect(mb, 1, rz, -0.55, 0.55, 2.47, 2.68, 0x14181e);
+  endRect(glow, 1, rz + 0.004, -0.45, 0.1, 2.52, 2.63, 0xffa628);
+  endRect(glow, 1, rz + 0.004, 0.22, 0.45, 2.52, 2.63, 0xffc85a);
   endPane(glass, 1, rz + 0.01, -0.8, 0.8, 1.75, 2.4);
   endRect(mb, 1, rz, -0.6, 0.6, 0.72, 1.12, 0x2b3038);
   for (let i = 0; i < 5; i++) endRect(mb, 1, rz + 0.004, -0.56, 0.56, 0.75 + i * 0.075, 0.78 + i * 0.075, shadeHex(L.lower, 0.7));
@@ -366,10 +393,10 @@ function bus(L: BusLivery, seed: number, oncoming: boolean): ObstacleBuilders {
   const axleZ = [zf + 2.05, zr - 2.25];
   for (const z of axleZ) arches(mb, z, 0.28);
   if (oncoming) {
-    return { body: mb, glass, glow, glowStrength: 3.2, axle: axleBuilder(), axleZ, axleY: WHEEL_R };
+    return { body: mb, glass, glow, night, glowStrength: 3.2, axle: axleBuilder(), axleZ, axleY: WHEEL_R };
   }
   bakeWheels(mb, axleZ);
-  return { body: mb, glass, glow, glowStrength: 1.8 };
+  return { body: mb, glass, glow, night, glowStrength: 1.8 };
 }
 
 /** Rotate every builder of a vehicle by 180° about Y (the oncoming bus faces +Z). */
@@ -385,6 +412,7 @@ function turnAround(b: ObstacleBuilders): ObstacleBuilders {
     body: flip(b.body)!,
     glass: flip(b.glass),
     glow: flip(b.glow),
+    night: flip(b.night),
     axleZ: b.axleZ?.map((z) => -z),
   };
 }

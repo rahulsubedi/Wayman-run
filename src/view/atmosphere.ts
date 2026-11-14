@@ -14,6 +14,7 @@ import type { Fog, Hemisphere } from '@pixi/3d';
 import { ZONE_COUNT } from '../sim/config';
 import type { Quality } from '../sim/types';
 import { mixHex } from './geom/color';
+import { setHeroLook, setNightGlow, type HeroLook } from './models/kit';
 import { Sky, type SkyState } from './sky/sky';
 import type { QualitySettings, Stage } from './stage';
 
@@ -41,6 +42,10 @@ export interface ZonePalette {
   bloomThreshold: number;
   /** Sky look; the haze band always takes `fogColor`. */
   sky: Omit<SkyState, 'haze'>;
+  /** Hero readability: rim light, albedo lift and hi-vis accent glow (see models/kit HeroLook). */
+  hero: HeroLook;
+  /** Emission of night-lit interiors (bus windows): 0 by day. */
+  interiors: number;
 }
 
 export const ZONE_PALETTES: readonly ZonePalette[] = [
@@ -57,20 +62,27 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
       moonAz: -30, moonEl: 30, moon: 0, stars: 0,
       cloudTint: 0xffffff, clouds: 1,
     },
+    hero: { rimColor: 0xfff4e0, rim: 0.5, lift: 0.03, glow: 0.2 },
+    interiors: 0,
   },
   // 1 Harbor Front: golden hour, low orange sun front-right, long shadows across the road.
   {
-    sunColor: 0xffa04a, sunIntensity: 3.6, sunDir: [-0.193, -0.375, 0.907],
-    fillColor: 0x86a8ff, fillIntensity: 0.6, fillDir: [0.35, -0.4, -1],
-    skyColor: 0x8fb0d8, groundColor: 0x9a5a3e, hemiIntensity: 0.62,
-    fogColor: 0xf6b48c, fogNear: 42, fogFar: 175,
+    // The sun hangs low over the open sea on the left, so its glitter path lies on the water in
+    // view and the street-facing fronts on the right catch grazing light instead of being backlit.
+    sunColor: 0xffa04a, sunIntensity: 3.6, sunDir: [0.345, -0.375, 0.86],
+    fillColor: 0x86a8ff, fillIntensity: 0.6, fillDir: [-0.35, -0.4, -1],
+    skyColor: 0x8fb0d8, groundColor: 0x9a5a3e, hemiIntensity: 0.66,
+    fogColor: 0xf4b892, fogNear: 60, fogFar: 212,
     exposure: 1.05, bloom: 0.5, bloomThreshold: 1.0,
     sky: {
       zenith: 0x2f7f9e, upper: 0xc590b8, horizon: 0xffa98f, glow: 0xffd27a, glowStrength: 0.95,
-      sunAz: 6, sunEl: 6, sunColor: 0xffd59a, sun: 1,
+      sunAz: -22, sunEl: 6, sunColor: 0xffd59a, sun: 1,
       moonAz: -40, moonEl: 30, moon: 0, stars: 0,
       cloudTint: 0xffbfa6, clouds: 0.85,
     },
+    // Low sun ahead-left: a warm back-light rim on the hero, as the sun really sits behind him.
+    hero: { rimColor: 0xffc27e, rim: 1.1, lift: 0.06, glow: 0.4 },
+    interiors: 0.8,
   },
   // 2 Night Bazaar: cool moonlight key, warm lantern fill, purple-blue fog, stars.
   {
@@ -85,10 +97,20 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
       moonAz: -3, moonEl: 12, moon: 1, stars: 1,
       cloudTint: 0x34407a, clouds: 0.45,
     },
+    // Night: cool moonlight rim + a lift so the hero never sinks into the blue road, and his
+    // hi-vis bands / soles / satchel reflector glow.
+    hero: { rimColor: 0xc4dcff, rim: 1.4, lift: 0.16, glow: 1.15 },
+    interiors: 4,
   },
 ];
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+/**
+ * Fog distance scale per quality tier. Lower tiers draw less of the street (SceneryView reads the
+ * fog's far plane and its own shorter prop reach), so the fog closes in to keep the cut invisible.
+ */
+const FOG_SCALE: Record<Quality, number> = { low: 0.8, medium: 0.9, high: 1 };
 
 export class Atmosphere {
   readonly sun: DirectionalLight;
@@ -101,6 +123,7 @@ export class Atmosphere {
   private readonly target = { x: 0, y: 0, z: 0 };
   private readonly shadowBox = new Box(new Vector3(-12, -1, -60), new Vector3(12, 10, 10));
   private readonly skyState: SkyState;
+  private readonly heroLook: HeroLook = { ...ZONE_PALETTES[0].hero };
   private lastZone = -1;
   private lastBlend = -1;
   /** Extra sky-glow / exposure kick (0..1), e.g. a flash on zone change; decays on its own. */
@@ -135,7 +158,10 @@ export class Atmosphere {
     this.skyState = { ...p0.sky, haze: p0.fogColor };
 
     stage.onBeforeRender(() => this.placeShadowBox());
-    stage.onQualityChange((_q: Quality, _s: Readonly<QualitySettings>) => this.placeShadowBox());
+    stage.onQualityChange((_q: Quality, _s: Readonly<QualitySettings>) => {
+      this.placeShadowBox();
+      this.lastZone = -1; // re-apply the fog for the new tier on the next update
+    });
     this.update(0, 0, 0);
   }
 
@@ -172,8 +198,9 @@ export class Atmosphere {
 
     const fogColor = mixHex(a.fogColor, b.fogColor, t);
     this.fog.color = fogColor;
-    this.fog.near = lerp(a.fogNear, b.fogNear, t);
-    this.fog.far = lerp(a.fogFar, b.fogFar, t);
+    const fs = FOG_SCALE[this.stage.quality];
+    this.fog.near = lerp(a.fogNear, b.fogNear, t) * fs;
+    this.fog.far = lerp(a.fogFar, b.fogFar, t) * fs;
     this.stage.view.background = fogColor;
 
     this.stage.view.exposure = lerp(a.exposure, b.exposure, t) * (1 + this.pulse * 0.15);
@@ -202,6 +229,14 @@ export class Atmosphere {
     s.cloudTint = mixHex(sa.cloudTint, sb.cloudTint, t);
     s.clouds = lerp(sa.clouds, sb.clouds, t);
     this.sky.apply(s);
+
+    const h = this.heroLook, ha = a.hero, hb = b.hero;
+    h.rimColor = mixHex(ha.rimColor, hb.rimColor, t);
+    h.rim = lerp(ha.rim, hb.rim, t);
+    h.lift = lerp(ha.lift, hb.lift, t);
+    h.glow = lerp(ha.glow, hb.glow, t);
+    setHeroLook(h);
+    setNightGlow(lerp(a.interiors, b.interiors, t));
   }
 
   private aim(light: DirectionalLight, da: V3, db: V3, t: number): void {

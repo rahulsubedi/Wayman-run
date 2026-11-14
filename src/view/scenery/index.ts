@@ -13,11 +13,13 @@ import { Container3D, CubeGeometry, Mesh3D } from '@pixi/3d';
 import type { Geometry3D, Material3D } from '@pixi/3d';
 import { ZONE_COUNT, ZONE_LENGTH } from '../../sim/config';
 import type { Stage } from '../stage';
+import type { Quality } from '../../sim/types';
 import { chunkZone, layoutChunk, type AnimKind, type WidthTable } from './layout';
 import { CHUNK_LEN } from './layoutConst';
 import type { Box } from './buildings';
 import { lowTable, moduleDefs, shadowTable, widthTable } from './library';
 import { sceneryMaterial, waterMaterial } from './material';
+import { buildGlint } from './ground';
 
 /**
  * A chunk retires once its far end is this far behind the player (the camera is ~7 m behind;
@@ -33,6 +35,12 @@ const CHUNK_COUNT = 8;
  */
 const DETAIL_AHEAD = 100;
 /**
+ * Props do not pop at those distances: each one grows in over the last FADE_LEN metres before its
+ * own threshold (per prop, not per chunk, so a chunk's props appear one by one, staggered by their
+ * position along the street).
+ */
+const FADE_LEN = 12;
+/**
  * Mid-size frontage (stalls, cafes, crates, boats...) is hidden beyond this distance: at 110 m+
  * it is a few pixels in heavy fog, and dropping it keeps the next zone's stall kinds out of the
  * draw list while that zone is still far ahead.
@@ -45,6 +53,16 @@ const MEDIUM_AHEAD = 110;
  */
 const HIDE_AHEAD = 212;
 
+/**
+ * Per quality tier: prop distances (small clutter, mid-size frontage) and the cap on whole-chunk
+ * distance. Lower tiers also pull the fog in (Atmosphere), so the shorter reach stays invisible.
+ */
+const REACH: Record<Quality, { detail: number; medium: number; hide: number }> = {
+  low: { detail: 52, medium: 66, hide: 168 },
+  medium: { detail: 75, medium: 88, hide: 190 },
+  high: { detail: DETAIL_AHEAD, medium: MEDIUM_AHEAD, hide: HIDE_AHEAD },
+};
+
 interface Module {
   geometry: Geometry3D;
   material: Material3D;
@@ -56,6 +74,10 @@ interface Module {
 
 interface AnimSlot {
   mesh: Mesh3D;
+  /** Distance of the slot from its chunk start along the street. */
+  u: number;
+  /** Scale last written by the distance fade (1 = fully grown, 0 = hidden). */
+  fade: number;
   kind: AnimKind;
   phase: number;
   baseY: number;
@@ -72,6 +94,9 @@ interface Chunk {
   proxyCount: number;
   /** Distance tier of each static slot (see Module.tier). */
   tier: number[];
+  /** Per static slot: distance from the chunk start along the street, and the last fade scale. */
+  su: number[];
+  fade: number[];
   staticCount: number;
   /** Chunk is close enough for small clutter / mid-size frontage / at all. */
   detail: boolean;
@@ -92,6 +117,8 @@ export class SceneryView {
   private zoneOffset = 0;
   private lastS = 0;
   private time = 0;
+  /** Sun glitter on the harbour sea, kept level with the player (see buildGlint). */
+  private readonly glint: Mesh3D;
 
   constructor(stage: Stage) {
     this.stage = stage;
@@ -126,14 +153,17 @@ export class SceneryView {
       for (let i = 0; i < maxStatic; i++) statics.push(new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }));
       const anims: AnimSlot[] = [];
       for (let i = 0; i < maxAnim; i++) {
-        anims.push({ mesh: new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }), kind: 'swing', phase: 0, baseY: 0, tier: 0 });
+        anims.push({ mesh: new Mesh3D({ parent: node, geometry: anyGeo, material: main, visible: false, castShadow: false }), u: 0, fade: 1, kind: 'swing', phase: 0, baseY: 0, tier: 0 });
       }
-      this.chunks.push({ node, index: Number.NaN, zone: -1, statics, proxies: [], proxyCount: 0, tier: statics.map(() => 0), staticCount: 0, detail: true, medium: true, anims, animCount: 0 });
+      this.chunks.push({ node, index: Number.NaN, zone: -1, statics, proxies: [], proxyCount: 0, tier: statics.map(() => 0), su: statics.map(() => 0), fade: statics.map(() => 1), staticCount: 0, detail: true, medium: true, anims, animCount: 0 });
     }
 
     stage.onRebase((dz) => {
       for (const ch of this.chunks) ch.node.position.z += dz;
     });
+
+    this.glint = new Mesh3D({ parent: this.root, geometry: buildGlint().build(), material: main, castShadow: false, label: 'glint' });
+    this.glint.receiveShadow = false;
 
     this.prewarm();
 
@@ -157,8 +187,16 @@ export class SceneryView {
     return o;
   }
 
-  update(playerS: number, zone: number, _zoneBlend: number, dt: number): void {
+  update(playerS: number, zone: number, zoneBlend: number, dt: number): void {
     this.time += dt;
+    // Glitter: shown around the harbour (the town lots hide it elsewhere), shimmering sideways.
+    const g = this.glint;
+    g.visible = zone === 1 || (zone === 0 && zoneBlend > 0.02);
+    if (g.visible) {
+      g.position.z = this.stage.worldZ(playerS);
+      g.scale.x = 1 + Math.sin(this.time * 2.3) * 0.025;
+      g.scale.z = 1 + Math.sin(this.time * 1.7 + 1) * 0.02;
+    }
     // Debug zone override: shift every chunk's zone by the difference to the positional zone.
     const posZone = Math.floor(playerS / ZONE_LENGTH) % ZONE_COUNT;
     const offset = (((zone - posZone) % ZONE_COUNT) + ZONE_COUNT) % ZONE_COUNT;
@@ -184,28 +222,59 @@ export class SceneryView {
         }
       }
     }
-    const hide = Math.min(HIDE_AHEAD, (this.stage.view.fog?.far ?? HIDE_AHEAD) + 12);
+    const reach = REACH[this.stage.quality];
+    const hide = Math.min(reach.hide, (this.stage.view.fog?.far ?? HIDE_AHEAD) + 12);
     for (let c = 0; c < chunks.length; c++) {
       const ch = chunks[c];
       const ahead = ch.index * CHUNK_LEN - playerS;
       ch.node.visible = ahead < hide;
-      const detail = ahead < DETAIL_AHEAD, medium = ahead < MEDIUM_AHEAD;
-      if (detail !== ch.detail || medium !== ch.medium) this.setDetail(ch, detail, medium);
+      if (ch.node.visible) this.fadeProps(ch, ahead, reach.detail, reach.medium);
     }
     this.animate();
   }
 
-  private setDetail(ch: Chunk, detail: boolean, medium: boolean): void {
-    ch.detail = detail;
-    ch.medium = medium;
+  /** Grow tiered props in (and hide them) by their own distance ahead. No allocation. */
+  private fadeProps(ch: Chunk, ahead: number, detail: number, medium: number): void {
+    if (ahead > medium || ahead + CHUNK_LEN < Math.min(detail, medium) - FADE_LEN) {
+      // Entirely beyond or entirely inside both thresholds: settle every slot once.
+      const far = ahead > medium;
+      if (far ? ch.detail || ch.medium : !(ch.detail && ch.medium)) {
+        ch.detail = ch.medium = !far;
+        for (let i = 0; i < ch.staticCount; i++) if (ch.tier[i]) this.setFade(ch.statics[i], far ? 0 : 1, ch.fade, i);
+        for (let i = 0; i < ch.animCount; i++) {
+          const a = ch.anims[i];
+          if (a.tier) a.fade = this.applyFade(a.mesh, far ? 0 : 1, a.fade);
+        }
+      }
+      return;
+    }
+    ch.detail = ch.medium = false; // mixed: re-evaluated every frame while it straddles a threshold
     for (let i = 0; i < ch.staticCount; i++) {
       const t = ch.tier[i];
-      if (t) ch.statics[i].visible = t === 1 ? detail : medium;
+      if (!t) continue;
+      const d = (t === 1 ? detail : medium) - (ahead + ch.su[i]);
+      this.setFade(ch.statics[i], d >= FADE_LEN ? 1 : d <= 0 ? 0 : d / FADE_LEN, ch.fade, i);
     }
     for (let i = 0; i < ch.animCount; i++) {
-      const t = ch.anims[i].tier;
-      if (t) ch.anims[i].mesh.visible = t === 1 ? detail : medium;
+      const a = ch.anims[i];
+      if (!a.tier) continue;
+      const d = (a.tier === 1 ? detail : medium) - (ahead + a.u);
+      a.fade = this.applyFade(a.mesh, d >= FADE_LEN ? 1 : d <= 0 ? 0 : d / FADE_LEN, a.fade);
     }
+  }
+
+  private setFade(m: Mesh3D, f: number, store: number[], i: number): void {
+    store[i] = this.applyFade(m, f, store[i]);
+  }
+
+  private applyFade(m: Mesh3D, f: number, prev: number): number {
+    if (f === prev) return prev;
+    m.visible = f > 0;
+    if (f > 0) {
+      const e = f * f * (3 - 2 * f);
+      m.scale.set(e, e, e);
+    }
+    return f;
   }
 
   // ------------------------------------------------------------------ internal
@@ -221,8 +290,8 @@ export class SceneryView {
     ch.node.position.z = this.stage.worldZ(index * CHUNK_LEN);
     const lay = layoutChunk(index, zone, this.widths, this.low);
     ch.zone = zone;
-    ch.detail = index * CHUNK_LEN - this.lastS < DETAIL_AHEAD;
-    ch.medium = index * CHUNK_LEN - this.lastS < MEDIUM_AHEAD;
+    // Freshly placed slots start fully grown; the next update() fades them by distance.
+    ch.detail = ch.medium = true;
     ch.node.visible = index * CHUNK_LEN - this.lastS < HIDE_AHEAD;
     let n = 0;
     for (const it of lay.items) {
@@ -234,8 +303,11 @@ export class SceneryView {
       if (m.castShadow !== mod.shadow) m.castShadow = mod.shadow;
       m.position.set(it.x, it.y, -it.u);
       m.rotation.y = it.rot;
+      m.scale.set(1, 1, 1);
       ch.tier[n - 1] = mod.tier;
-      m.visible = mod.tier === 0 || (mod.tier === 1 ? ch.detail : ch.medium);
+      ch.su[n - 1] = it.u;
+      ch.fade[n - 1] = 1;
+      m.visible = true;
     }
     ch.staticCount = n;
     for (let i = n; i < ch.statics.length; i++) ch.statics[i].visible = false;
@@ -270,7 +342,10 @@ export class SceneryView {
       slot.phase = it.phase;
       slot.baseY = it.y;
       slot.tier = mod.tier;
-      slot.mesh.visible = mod.tier === 0 || (mod.tier === 1 ? ch.detail : ch.medium);
+      slot.u = it.u;
+      slot.fade = 1;
+      slot.mesh.scale.set(1, 1, 1);
+      slot.mesh.visible = true;
     }
     for (let i = a; i < ch.anims.length; i++) ch.anims[i].mesh.visible = false;
     ch.animCount = a;

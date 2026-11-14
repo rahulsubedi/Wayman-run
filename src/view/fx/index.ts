@@ -13,18 +13,14 @@ import { Container3D } from '@pixi/3d';
 import { MAGNET_RADIUS, PICKUP_HOVER, SPEED_MAX, SPEED_START } from '../../sim/config';
 import type { PowerupKind, SimEvent, SimState } from '../../sim/types';
 import { mixHex } from '../geom/color';
+import { POWERUP_COLOR } from '../models/pickups';
 import type { Stage } from '../stage';
 import { Frame, particleFrames } from './atlas';
 import { Mode, ParticlePool } from './particles';
 import { ScreenFx } from './screen';
 
-/** Colours per power-up (match the pickup models). */
-export const POWERUP_FX_COLOR: Record<PowerupKind, number> = {
-  magnet: 0xff4b5c,
-  shield: 0x4fb3ff,
-  boost: 0x5cf08a,
-  multiplier: 0xc77dff,
-};
+/** Colours per power-up: the pickup models' colours (magnet red, shield blue, boost orange, multiplier purple). */
+export const POWERUP_FX_COLOR: Record<PowerupKind, number> = POWERUP_COLOR;
 
 /** Dust tint per zone (market sandstone, harbor warm, night cool). */
 const DUST = [0xe6d6b8, 0xf0c9a0, 0x8d93b8];
@@ -87,7 +83,7 @@ export class Fx {
         const c = POWERUP_FX_COLOR[e.kind];
         this.ringBurst(p.x, p.y, hz, carry, c, 1);
         this.screen.pulse(c, 0.55);
-        this.screen.flash(0xffffff, 0.12, 2.5);
+        this.screen.flash(0xffffff, 0.1);
         break;
       }
       case 'powerupEnd':
@@ -111,22 +107,23 @@ export class Fx {
         break;
       case 'stumble':
         this.stumbleStars(p.x, p.y, hz, carry);
-        this.screen.pulse(0xff9a3a, 0.35);
+        this.screen.pulse(0xff9a3a, 0.3, 4);
         break;
       case 'shieldBreak':
         this.shards(p.x, p.y + 1.0, hz - 0.4, carry * 0.5, POWERUP_FX_COLOR.shield);
-        this.screen.flash(0xbfe8ff, 0.3, 3);
-        this.screen.pulse(POWERUP_FX_COLOR.shield, 0.7);
+        this.screen.flash(0xbfe8ff, 0.22);
+        this.screen.pulse(POWERUP_FX_COLOR.shield, 0.45, 5);
         break;
       case 'gameOver':
         if (e.reason === 'crash') {
           this.crash(p.x, p.y, hz);
-          this.screen.flash(0xffffff, 0.55, 2.4);
-          this.screen.pulse(0xff3a2a, 0.8);
+          this.screen.flash(0xfff0e0, 0.3);
+          this.screen.pulse(0xff3a2a, 0.45, 5);
         } else {
           this.stumbleStars(p.x, p.y, hz, 0);
           this.sparks(p.x, p.y + 1.2, hz, 0, 0xfff1b0, 14);
-          this.screen.flash(0xff5a4a, 0.3, 2);
+          this.screen.flash(0xff5a4a, 0.25);
+          this.screen.pulse(0xff3a2a, 0.3, 5);
         }
         break;
       default:
@@ -459,9 +456,9 @@ export class Fx {
     // impact flash at the contact point
     const g = this.glow, f = g.t;
     f.mode = Mode.Ballistic; f.frame = Frame.Dot; f.gravity = 0; f.drag = 0; f.spin = 0; f.fadeIn = 0;
-    f.color0 = 0xffffff; f.color1 = 0xffb060; f.alpha0 = 1; f.alpha1 = 0; f.life = 0.22; f.size0 = 2.6; f.size1 = 4;
+    f.color0 = 0xffffff; f.color1 = 0xffb060; f.alpha0 = 0.55; f.alpha1 = 0; f.life = 0.16; f.size0 = 1.2; f.size1 = 2;
     g.emit(x, y + 1.1, z - 0.7, 0, 0, 0);
-    f.frame = Frame.Ring; f.life = 0.4; f.size0 = 1; f.size1 = 6; f.alpha0 = 0.8; f.color1 = 0xffd090;
+    f.frame = Frame.Ring; f.life = 0.3; f.size0 = 0.8; f.size1 = 3.2; f.alpha0 = 0.4; f.color1 = 0xffd090;
     g.emit(x, y + 1.0, z - 0.7, 0, 0, 0);
     this.groundRing(x, y, z, 0, DUST[this.zone], 0.6);
   }

@@ -9,9 +9,9 @@
 import { Container3D, Mesh3D } from '@pixi/3d';
 import { ROLL_TIME, STUMBLE_TIME } from '../../sim/config';
 import type { PlayerAction, PlayerState, SimState } from '../../sim/types';
-import { glow, vertexColorMaterial } from '../geom/materials';
+import { glow } from '../geom/materials';
 import { HERO_JOINTS as J, heroGeometry } from './heroGeometry';
-import { fadeVC, fresnelGlow, glowVC } from './kit';
+import { fadeVC, fresnelGlow, glowVC, heroMaterial } from './kit';
 
 // ---- pose channels -------------------------------------------------------------------------
 const P = {
@@ -121,7 +121,7 @@ export class HeroRig {
 
   constructor() {
     const g = heroGeometry();
-    const mat = vertexColorMaterial({ roughness: 0.72 });
+    const mat = heroMaterial();
     const mesh = (geometry: typeof g.torso, parent: Container3D, label: string) =>
       new Mesh3D({ geometry, material: mat, parent, label });
     const joint = (parent: Container3D, x: number, y: number, z: number, label: string) =>
@@ -171,6 +171,8 @@ export class HeroRig {
     }
     this.satchel = joint(this.spine, J.satchelAt[0], J.satchelAt[1], J.satchelAt[2], 'satchel');
     mesh(g.satchel, this.satchel, 'satchel');
+    // A touch smaller than modelled: from the chase camera the bag must not hide the jacket.
+    this.satchel.scale.set(0.86, 0.86, 0.86);
 
     // Boost thruster: glow + flame under the satchel nozzle.
     this.nozzle = new Mesh3D({ geometry: g.nozzleGlow, material: glow(0xffc46a, 3), parent: this.satchel, position: { x: 0, y: -0.375, z: 0.07 }, label: 'nozzle' });
