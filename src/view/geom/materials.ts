@@ -4,6 +4,13 @@
 // Shared materials must be treated as read-only. If something needs to animate a material
 // (pulse an emissive, fade alpha), ask for a private one with `unique(...)` or `material.clone()`,
 // and accept that it no longer instances with the shared one.
+//
+// Curved world: every material created anywhere (this kit, `new Material3D(...)`, FlatMaterial,
+// particles, custom `extraBits`) bends automatically through the hook in `worldBend.ts`; nothing
+// to do here. The only rule: `fog: false` means "background at infinity, does not bend" (sky,
+// sun, moon, clouds, far sky cards). Near geometry must keep the default `fog: true`, or opt in
+// with `setMaterialBend(material, true)`. Long faces should be split into <= ~6 m pieces along
+// the street so the bend can curve them (it moves vertices only).
 import { FlatMaterial, Material3D } from '@pixi/3d';
 import type { BaseMaterial3D } from '@pixi/3d';
 
