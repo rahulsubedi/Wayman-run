@@ -5,7 +5,7 @@ import type { Geometry3D } from '@pixi/3d';
 import type { ChaserState } from '../../sim/types';
 import { glow, vertexColorGloss } from '../geom/materials';
 import { MeshBuilder } from '../geom/meshBuilder';
-import { fadeVC, glowVC, loft, ring } from './kit';
+import { beamVC, fadeVC, glowVC, loft, ring } from './kit';
 
 const D = {
   hull: 0x2c3442,
@@ -97,17 +97,57 @@ function beaconBuilder(): MeshBuilder {
   return mb;
 }
 
-/** Searchlight cone: apex at the origin, opening along -Z, unit length; fades to black. */
+/**
+ * Searchlight cone: apex at the origin, opening along -Z, unit length. Warm white, bright near the
+ * lamp and fading along its length (the beam material also fades it toward its silhouette).
+ */
 function coneBuilder(): MeshBuilder {
   const mb = new MeshBuilder({ seed: 65, jitter: 0 });
   mb.push().rotateX(Math.PI / 2);
   loft(mb, [
-    { y: 0, rx: 0.03, rz: 0.03 },
-    { y: -0.15, rx: 0.06, rz: 0.06 },
-    { y: -0.55, rx: 0.15, rz: 0.15 },
-    { y: -1, rx: 0.24, rz: 0.24 },
-  ], { sides: 12, bands: [{ color: 0xf2fcff, alpha: 0.42 }, { color: 0xe6f8ff, alpha: 0.2 }, { color: 0xdaf4ff, alpha: 0.07 }], capTop: false, capBottom: false });
+    { y: 0, rx: 0.025, rz: 0.025 },
+    { y: -0.12, rx: 0.055, rz: 0.055 },
+    { y: -0.4, rx: 0.12, rz: 0.12 },
+    { y: -0.72, rx: 0.19, rz: 0.19 },
+    { y: -1, rx: 0.245, rz: 0.245 },
+  ], {
+    sides: 12,
+    bands: [
+      { color: 0xfff6dc, alpha: 0.85 },
+      { color: 0xffecc0, alpha: 0.42 },
+      { color: 0xffe0a8, alpha: 0.18 },
+      { color: 0xffd28c, alpha: 0.06 },
+    ],
+    capTop: false, capBottom: false,
+  });
   mb.pop();
+  return mb;
+}
+
+/** Pool of light where the beam lands: flat disc on the road, bright warm centre, soft edge. */
+function poolBuilder(): MeshBuilder {
+  const mb = new MeshBuilder({ seed: 66, jitter: 0 });
+  const rings = [0, 0.3, 0.6, 0.85, 1];
+  const bands = [
+    { color: 0xfff1cf, alpha: 0.5 },
+    { color: 0xffe6b0, alpha: 0.34 },
+    { color: 0xffd894, alpha: 0.17 },
+    { color: 0xffcc80, alpha: 0.05 },
+  ];
+  for (let i = 0; i < bands.length; i++) {
+    loft(mb, [{ y: 0, rx: rings[i + 1], rz: rings[i + 1] }, { y: 0.0001, rx: rings[i], rz: rings[i] }], { sides: 16, bands: [bands[i]], capTop: false, capBottom: false });
+  }
+  return mb;
+}
+
+/** Spinning rotor disc: a faint blurred disc with a brighter tip ring (reads at any angle). */
+function discBuilder(): MeshBuilder {
+  const mb = new MeshBuilder({ seed: 67, jitter: 0 });
+  const r = [0.06, 0.2, 0.27, 0.3];
+  const bands = [{ color: 0xd8dde6, alpha: 0.14 }, { color: 0xe8ecf2, alpha: 0.24 }, { color: 0xffd36a, alpha: 0.42 }];
+  for (let i = 0; i < bands.length; i++) {
+    loft(mb, [{ y: 0, rx: r[i + 1], rz: r[i + 1] }, { y: 0.0001, rx: r[i], rz: r[i] }], { sides: 14, bands: [bands[i]], capTop: false, capBottom: false });
+  }
   return mb;
 }
 
@@ -117,12 +157,14 @@ interface ChaserGeometry {
   eye: Geometry3D;
   beacon: Geometry3D;
   cone: Geometry3D;
+  pool: Geometry3D;
+  disc: Geometry3D;
 }
 
 let cache: ChaserGeometry | null = null;
 
 export function chaserBuilders(): Record<string, MeshBuilder> {
-  return { hull: hullBuilder(), rotor: rotorBuilder(), eye: eyeBuilder(), beacon: beaconBuilder(), cone: coneBuilder() };
+  return { hull: hullBuilder(), rotor: rotorBuilder(), eye: eyeBuilder(), beacon: beaconBuilder(), cone: coneBuilder(), pool: poolBuilder(), disc: discBuilder() };
 }
 
 function geometry(): ChaserGeometry {
@@ -132,6 +174,8 @@ function geometry(): ChaserGeometry {
     eye: eyeBuilder().build(),
     beacon: beaconBuilder().build(),
     cone: coneBuilder().build(),
+    pool: poolBuilder().build(),
+    disc: discBuilder().build(),
   };
   return cache;
 }
@@ -147,6 +191,8 @@ export class ChaserRig {
   private readonly coneYaw: Container3D;
   private readonly conePitch: Container3D;
   private readonly cone: Mesh3D;
+  private readonly core: Mesh3D;
+  private readonly pool: Mesh3D;
   private vis = 0;
   private rotorAngle = 0;
   private lastX = NaN;
@@ -170,14 +216,21 @@ export class ChaserRig {
       const r = new Mesh3D({ geometry: g.rotor, material: vertexColorGloss(), parent: this.frame, position: { x, y: DUCT_Y + 0.03, z }, label: 'rotor' });
       r.castShadow = false;
       this.rotors.push(r);
+      const d = new Mesh3D({ geometry: g.disc, material: fadeVC(), parent: this.frame, position: { x, y: DUCT_Y + 0.045, z }, label: 'rotorDisc' });
+      d.castShadow = false;
     }
     this.red = new Mesh3D({ geometry: g.beacon, material: glow(0xff2a2a, 4), parent: this.frame, position: { x: -0.16, y: 0.33, z: 0.08 }, label: 'beacon' });
     this.blue = new Mesh3D({ geometry: g.beacon, material: glow(0x2a7bff, 4), parent: this.frame, position: { x: 0.16, y: 0.33, z: 0.08 }, label: 'beacon' });
     this.red.castShadow = this.blue.castShadow = false;
     this.coneYaw = new Container3D({ parent: this.frame, position: { x: 0, y: -0.28, z: -0.48 }, label: 'searchlight' });
     this.conePitch = new Container3D({ parent: this.coneYaw });
-    this.cone = new Mesh3D({ geometry: g.cone, material: fadeVC(), parent: this.conePitch, label: 'cone' });
+    this.cone = new Mesh3D({ geometry: g.cone, material: beamVC(1.4), parent: this.conePitch, label: 'cone' });
     this.cone.castShadow = false;
+    // Narrow hot core inside the cone (same geometry, brighter material: blooms near the lamp).
+    this.core = new Mesh3D({ geometry: g.cone, material: beamVC(2.6), parent: this.conePitch, label: 'beamCore' });
+    this.core.castShadow = false;
+    this.pool = new Mesh3D({ geometry: g.pool, material: fadeVC(), parent: this.node, label: 'beamPool' });
+    this.pool.castShadow = false;
     this.node.visible = false;
   }
 
@@ -228,7 +281,7 @@ export class ChaserRig {
 
     const bob = Math.sin(time * 2.6) * 0.13 + Math.sin(time * 4.3 + 1) * 0.04;
     this.hover.position.set(0, HOVER_Y + bob + (1 - e) * 1.6, 0);
-    this.frame.rotation.set(-0.14 + Math.sin(time * 1.9) * 0.05, Math.sin(time * 0.9) * 0.12, this.bank + Math.sin(time * 1.6) * 0.07);
+    this.frame.rotation.set(-0.34 + Math.sin(time * 1.9) * 0.05, Math.sin(time * 0.9) * 0.12, this.bank + Math.sin(time * 1.6) * 0.07);
 
     // Rotors (alternating directions).
     this.rotorAngle += dt * 38;
@@ -262,5 +315,10 @@ export class ChaserRig {
     const wide = 1.2 + dist * 0.22;
     const k = e / DRONE_SCALE;
     this.cone.scale.set(wide * k, wide * k, dist * k);
+    this.core.scale.set(wide * k * 0.4, wide * k * 0.4, dist * k * 0.75);
+    // Light pool on the road under the target (node space: the road is at -node.y).
+    const pr = (0.55 + dist * 0.09) * e;
+    this.pool.position.set(tx, 0.035 - this.node.position.y, tz);
+    this.pool.scale.set(pr, 1, pr * 1.25);
   }
 }

@@ -442,3 +442,38 @@ export function setHeroLook(l: Readonly<HeroLook>): void {
   m.data.heroLift = l.lift;
   m.data.heroGlow = l.glow;
 }
+
+// ------------------------------------------------------------------ light beams
+
+const BEAM_GL = `{
+  vec3 bV = normalize(uCameraPosition - vPosition);
+  float bF = abs(dot(normalize(normal), bV));
+  alpha *= bF * bF * (3.0 - 2.0 * bF);
+  albedo *= material.beamGain;
+}`;
+const BEAM_GPU = `{
+  let bV = normalize(camera.uCameraPosition - input.vPosition);
+  let bF = abs(dot(normalize(normal), bV));
+  alpha *= bF * bF * (3.0 - 2.0 * bF);
+  albedo *= material.beamGain;
+}`;
+const beamBit: ShaderBit = {
+  name: 'waymanBeam',
+  bindings: { material: { beamGain: 'f32' } },
+  gpu: { fragment: { material: BEAM_GPU } },
+  gl: { fragment: { material: BEAM_GL } },
+};
+
+/**
+ * Volumetric-looking light shaft: unlit, alpha-blended vertex colours whose opacity falls off
+ * toward the silhouette (faces seen edge-on fade out), so a cone reads as soft light instead of a
+ * milky solid tube. `gain` > 1 lets the core near the lamp exceed 1.0 and bloom. Additive blending
+ * is not usable on 3D materials in this engine version (renders solid white).
+ */
+export function beamVC(gain = 1.6): FlatMaterial {
+  return cachedMat(`models:beam:${gain}`, () => {
+    const m = new FlatMaterial({ baseColor: 0xffffff, vertexColors: true, alphaMode: 'blend', alpha: 1, doubleSided: true, extraBits: [beamBit] });
+    m.data.beamGain = gain;
+    return m;
+  });
+}
