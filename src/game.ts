@@ -94,7 +94,7 @@ const POWERUP_LABEL: Record<PowerupKind, string> = {
 const PREWARM = {
   hurdle: 8, overhead: 8, blocker: 8,
   truck: 3, bus: 3, busOncoming: 3, ramp: 4,
-  coin: 90, magnet: 2, shield: 2, boost: 2, multiplier: 2,
+  coin: 130, magnet: 2, shield: 2, boost: 2, multiplier: 2,
 } as const;
 
 function loadBest(): Best {
