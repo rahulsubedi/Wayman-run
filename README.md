@@ -157,6 +157,8 @@ src/
 
 Browser scripts drive the game in Chromium through Playwright. Those that load the game expect `npm run build` to have run first, so they test `dist/`.
 
+- `npm run build:artifact`: builds `dist-artifact/wayman-run.html`, the whole game as one self-contained HTML fragment (inline CSS and one inline module script, no external requests, no `eval`; for hosts that wrap a single file in their own page under a strict CSP). Config: `vite.artifact.config.ts`, `scripts/build-artifact.mjs`.
+- `scripts/artifact-check.mjs`: loads that file in headless Chromium inside a sandboxed iframe (with and without `allow-same-origin`, at 1280x720 and 390x844) behind a strict CSP and fails on any CSP violation, console error or extra network request, or if the menu, Play, canvas, layout or HUD are wrong. Screenshots go to `shots/artifact/`.
 - `scripts/shot.mjs`: screenshot and boot check of the game, with a JSON summary. Serves `dist/`, or a running server with `--url`.
 - `scripts/fxshot.mjs`: scripted screenshots of effects. Runs steps such as `advance`, `js`, `jsfile` and `shot`.
 - `scripts/fx/*.js`: page snippets for `fxshot.mjs`, run with a `jsfile:` step. `autoq.js` exercises the quality watchdog, `fly.js` fakes boost flight with the magnet, `perf.js` times ticks and renders, and `untilOver.js` runs until game over.
