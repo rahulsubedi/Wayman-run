@@ -8,20 +8,20 @@ import { MeshBuilder } from '../geom/meshBuilder';
 import { faceToward, loft, ring, taper, type V3 } from './kit';
 
 export const HERO_COLORS = {
-  jacket: 0x17b3a6,
-  jacketDark: 0x0f7f78,
+  jacket: 0x14bfb0,
+  jacketDark: 0x0e8c83,
   jacketLight: 0x7fe3d6,
   reflect: 0xe9f1ee,
-  scarf: 0xff7a2f,
+  scarf: 0xff7424,
   scarfDark: 0xd9541a,
   scarfLight: 0xffb070,
   skin: 0xf0aa7e,
   skinDark: 0xd98a62,
   hair: 0x3a2417,
-  cap: 0x22507a,
+  cap: 0x285c8e,
   capDark: 0x163a5a,
-  pants: 0x2c3d63,
-  pantsDark: 0x1f2c4a,
+  pants: 0x33497a,
+  pantsDark: 0x253659,
   shoe: 0xf6f3ec,
   sole: 0xfff7ec,
   tread: 0xb4552c,
@@ -36,6 +36,11 @@ export const HERO_COLORS = {
 } as const;
 
 const H = HERO_COLORS;
+
+/** Hi-vis accents: vertex alpha < 1 marks them as self-lit in the hero material (night glow). */
+const REFLECT = { color: H.reflect, alpha: 0.55 };
+const REFLECT_STRIP = { color: 0xffd9a0, alpha: 0.35 };
+const SOLE = { color: H.sole, alpha: 0.7 };
 
 /** Joint layout (rest pose), metres. Feet on y = 0, facing -Z. */
 export const HERO_JOINTS = {
@@ -82,7 +87,7 @@ function torso(): MeshBuilder {
     { y: 0.35, rx: 0.232, rz: 0.15 },
     { y: 0.42, rx: 0.212, rz: 0.135 },
     { y: 0.47, rx: 0.13, rz: 0.1 },
-  ], { bands: [H.jacketDark, shadeHex(H.jacket, 0.88), H.jacket, H.reflect, H.jacket, shadeHex(H.jacket, 1.05), H.jacketLight] });
+  ], { bands: [H.jacketDark, shadeHex(H.jacket, 0.88), H.jacket, REFLECT, H.jacket, shadeHex(H.jacket, 1.05), H.jacketLight] });
   // Shoulder yokes (lighter panels).
   for (const s of [-1, 1]) {
     mb.push().translate(s * 0.15, 0.4, 0).rotateZ(s * -0.35).bevelBox(0.14, 0.05, 0.27, 0.02, H.jacketLight).pop();
@@ -192,7 +197,7 @@ function upperArm(): MeshBuilder {
   loft(mb, [
     { y: -0.1, rx: 0.075, rz: 0.075 },
     { y: -0.13, rx: 0.073, rz: 0.073 },
-  ], { bands: [H.reflect], sides: 7 });
+  ], { bands: [REFLECT], sides: 7 });
   return mb;
 }
 
@@ -243,7 +248,7 @@ function foot(): MeshBuilder {
   const a = J.ankle;
   // Sole: dark tread + orange midsole stripe + white wall.
   mb.push().translate(0, -a + 0.012, -0.055).box(0.15, 0.024, 0.31, H.tread).pop();
-  mb.push().translate(0, -a + 0.037, -0.055).bevelBox(0.158, 0.03, 0.315, 0.012, H.sole).pop();
+  mb.push().translate(0, -a + 0.037, -0.055).bevelBox(0.158, 0.03, 0.315, 0.012, SOLE).pop();
   // Upper.
   mb.push().translate(0, -a + 0.085, -0.03).bevelBox(0.145, 0.075, 0.24, 0.035, H.shoe).pop();
   // Toe box (lower, rounder).
@@ -262,13 +267,13 @@ function foot(): MeshBuilder {
 /** Scarf tail segment, hanging -Y from its pivot. `end` adds the fringe. */
 function scarfSeg(i: number): MeshBuilder {
   const mb = new MeshBuilder({ seed: 20 + i, jitter: 0.03 });
-  const w = 0.13 - i * 0.01;
-  const len = J.scarfSeg + 0.015;
-  taper(mb, -len, 0, w * 0.92, 0.024, w, 0.026, i === 1 ? H.scarfDark : H.scarf);
+  const w = 0.165 - i * 0.012;
+  const len = J.scarfSeg + 0.02;
+  taper(mb, -len, 0, w * 0.92, 0.034, w, 0.036, i === 1 ? H.scarfDark : H.scarf);
   if (i === 2) {
     // White stripe + fringe.
     mb.block(-w * 0.47, -len * 0.62, -0.014, w * 0.47, -len * 0.5, 0.014, 0xfff3e6);
-    for (let k = -2; k <= 2; k++) mb.block(k * 0.018 - 0.006, -len - 0.04, -0.008, k * 0.018 + 0.006, -len, 0.008, H.scarfLight);
+    for (let k = -2; k <= 2; k++) mb.block(k * 0.024 - 0.008, -len - 0.05, -0.01, k * 0.024 + 0.008, -len, 0.01, H.scarfLight);
   }
   return mb;
 }
@@ -285,6 +290,8 @@ function satchel(): MeshBuilder {
   mb.push().translate(0, -0.14, 0.159).rotateX(Math.PI / 2).cylinder(0.065, 0.01, 10, {}, H.scarf).pop();
   faceToward(mb, [[-0.035, -0.17, 0.166], [0.02, -0.17, 0.166], [0.02, -0.11, 0.166], [-0.035, -0.11, 0.166]], [0, 0, 1], 0xfff6ea);
   faceToward(mb, [[0.02, -0.18, 0.167], [0.055, -0.14, 0.167], [0.02, -0.1, 0.167]], [0, 0, 1], 0xfff6ea);
+  // Reflector strip across the bottom of the back face (catches the light at night).
+  mb.block(-0.15, -0.262, 0.148, 0.15, -0.238, 0.162, REFLECT_STRIP);
   // Buckle straps.
   for (const s of [-1, 1]) {
     mb.block(s * 0.12 - 0.02, -0.29, 0.155, s * 0.12 + 0.02, -0.07, 0.165, H.strap);

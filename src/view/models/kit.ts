@@ -377,3 +377,68 @@ export function paintGloss(): Material3D {
 export function windowGlass(): Material3D {
   return cachedMat('models:glass', () => new Material3D({ baseColor: 0x9fd6f0, roughness: 0.08, metallic: 0.3, alphaMode: 'blend', alpha: 0.42 }));
 }
+
+// ------------------------------------------------------------------ hero look
+
+const HERO_GL = `{
+  float hF = 1.0 - clamp(dot(normalize(normal), viewDir), 0.0, 1.0);
+  float hF2 = hF * hF;
+  float hRim = hF2 * hF2;
+  // Rim tinted by the surface colour so thin limbs keep their identity instead of turning white.
+  emissive += albedo * material.heroLift + material.heroRim.rgb * (albedo * 2.0 + vec3(0.12)) * (hRim * material.heroRim.a);
+  emissive += vColor.rgb * (1.0 - vColor.a) * material.heroGlow;
+}`;
+const HERO_GPU = `{
+  let hF = 1.0 - clamp(dot(normalize(normal), viewDir), 0.0, 1.0);
+  let hF2 = hF * hF;
+  let hRim = hF2 * hF2;
+  emissive += albedo * material.heroLift + material.heroRim.rgb * (albedo * 2.0 + vec3<f32>(0.12)) * (hRim * material.heroRim.a);
+  emissive += input.vColor.rgb * (1.0 - input.vColor.a) * material.heroGlow;
+}`;
+const heroBit: ShaderBit = {
+  name: 'waymanHeroLook',
+  bindings: { material: { heroRim: 'vec4<f32>', heroLift: 'f32', heroGlow: 'f32' } },
+  gpu: { fragment: { material: HERO_GPU } },
+  gl: { fragment: { material: HERO_GL } },
+};
+
+/** Per-zone hero readability controls (pushed by Atmosphere; cheap uniform writes). */
+export interface HeroLook {
+  /** Rim (back/edge) light colour, sRGB hex, and strength (linear; ~0.3 subtle, 1+ blooms). */
+  rimColor: number;
+  rim: number;
+  /** Self-lift: fraction of the albedo added as emission so the hero never sinks into the dark. */
+  lift: number;
+  /** Emission of the reflective accents (faces painted with vertex alpha < 1). */
+  glow: number;
+}
+
+/**
+ * The hero's lit vertex-colour material with a view-dependent rim light, a small albedo lift and
+ * vertex-alpha emission for the reflective accents (hi-vis bands, soles, satchel reflector).
+ */
+export function heroMaterial(): Material3D {
+  return cachedMat('models:hero', () => {
+    const m = new Material3D({ baseColor: 0xffffff, vertexColors: true, roughness: 0.68, metallic: 0, extraBits: [heroBit] });
+    m.data.heroRim = [1, 0.85, 0.6, 0.3];
+    m.data.heroLift = 0.04;
+    m.data.heroGlow = 0.4;
+    return m;
+  });
+}
+
+const rimTmp = [0, 0, 0, 0];
+
+/** Apply a HeroLook to the hero material (no allocation). */
+export function setHeroLook(l: Readonly<HeroLook>): void {
+  const m = heroMaterial();
+  const c = l.rimColor;
+  // sRGB -> linear (gamma 2.2 is plenty for a rim tint).
+  rimTmp[0] = Math.pow(((c >> 16) & 255) / 255, 2.2);
+  rimTmp[1] = Math.pow(((c >> 8) & 255) / 255, 2.2);
+  rimTmp[2] = Math.pow((c & 255) / 255, 2.2);
+  rimTmp[3] = l.rim;
+  m.data.heroRim = rimTmp;
+  m.data.heroLift = l.lift;
+  m.data.heroGlow = l.glow;
+}

@@ -14,6 +14,7 @@ import type { Fog, Hemisphere } from '@pixi/3d';
 import { ZONE_COUNT } from '../sim/config';
 import type { Quality } from '../sim/types';
 import { mixHex } from './geom/color';
+import { setHeroLook, type HeroLook } from './models/kit';
 import { Sky, type SkyState } from './sky/sky';
 import type { QualitySettings, Stage } from './stage';
 
@@ -41,6 +42,8 @@ export interface ZonePalette {
   bloomThreshold: number;
   /** Sky look; the haze band always takes `fogColor`. */
   sky: Omit<SkyState, 'haze'>;
+  /** Hero readability: rim light, albedo lift and hi-vis accent glow (see models/kit HeroLook). */
+  hero: HeroLook;
 }
 
 export const ZONE_PALETTES: readonly ZonePalette[] = [
@@ -57,6 +60,7 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
       moonAz: -30, moonEl: 30, moon: 0, stars: 0,
       cloudTint: 0xffffff, clouds: 1,
     },
+    hero: { rimColor: 0xfff4e0, rim: 0.5, lift: 0.03, glow: 0.2 },
   },
   // 1 Harbor Front: golden hour, low orange sun front-right, long shadows across the road.
   {
@@ -73,6 +77,8 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
       moonAz: -40, moonEl: 30, moon: 0, stars: 0,
       cloudTint: 0xffbfa6, clouds: 0.85,
     },
+    // Low sun ahead-left: a warm back-light rim on the hero, as the sun really sits behind him.
+    hero: { rimColor: 0xffc27e, rim: 1.1, lift: 0.06, glow: 0.4 },
   },
   // 2 Night Bazaar: cool moonlight key, warm lantern fill, purple-blue fog, stars.
   {
@@ -87,6 +93,9 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
       moonAz: -3, moonEl: 12, moon: 1, stars: 1,
       cloudTint: 0x34407a, clouds: 0.45,
     },
+    // Night: cool moonlight rim + a lift so the hero never sinks into the blue road, and his
+    // hi-vis bands / soles / satchel reflector glow.
+    hero: { rimColor: 0xc4dcff, rim: 1.4, lift: 0.16, glow: 1.15 },
   },
 ];
 
@@ -103,6 +112,7 @@ export class Atmosphere {
   private readonly target = { x: 0, y: 0, z: 0 };
   private readonly shadowBox = new Box(new Vector3(-12, -1, -60), new Vector3(12, 10, 10));
   private readonly skyState: SkyState;
+  private readonly heroLook: HeroLook = { ...ZONE_PALETTES[0].hero };
   private lastZone = -1;
   private lastBlend = -1;
   /** Extra sky-glow / exposure kick (0..1), e.g. a flash on zone change; decays on its own. */
@@ -204,6 +214,13 @@ export class Atmosphere {
     s.cloudTint = mixHex(sa.cloudTint, sb.cloudTint, t);
     s.clouds = lerp(sa.clouds, sb.clouds, t);
     this.sky.apply(s);
+
+    const h = this.heroLook, ha = a.hero, hb = b.hero;
+    h.rimColor = mixHex(ha.rimColor, hb.rimColor, t);
+    h.rim = lerp(ha.rim, hb.rim, t);
+    h.lift = lerp(ha.lift, hb.lift, t);
+    h.glow = lerp(ha.glow, hb.glow, t);
+    setHeroLook(h);
   }
 
   private aim(light: DirectionalLight, da: V3, db: V3, t: number): void {
