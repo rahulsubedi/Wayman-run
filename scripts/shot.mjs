@@ -14,7 +14,9 @@
 //   --width <px> --height <px>   viewport (default 1280x720)
 //   --renderer webgl|webgpu       adds renderer=... to the query (default: let the game choose)
 //   --webgpu                launch Chromium with the SwiftShader WebGPU flags and add renderer=webgpu
-//                           (the summary's `backend` field shows what the game actually runs on)
+//                           (the summary's `backend` field shows what the game actually runs on).
+//                           Software WebGPU takes seconds per frame, so the real-time ticker is
+//                           stopped after boot: frames come from --advance / --seq only.
 //   --timeout <ms>          wait for __wayman.ready (default 60000)
 //
 // Prints a JSON summary (sim state after each shot) and every console error / page error.
@@ -99,13 +101,14 @@ async function main() {
       return st ? st.backend : document.querySelector('canvas') ? 'unknown' : 'no-canvas';
     });
     if (o.renderer && summary.backend !== o.renderer) summary.backendMismatch = `asked for ${o.renderer}, running ${summary.backend}`;
+    if (o.webgpu) await page.evaluate(() => window.__wayman.game?.stage.app.ticker.stop());
     for (const shot of shots) {
       const t0 = Date.now();
       if (shot.advance > 0) await page.evaluate((s) => window.__wayman.advance(s), shot.advance);
       // Two animation frames so the DOM overlay and the canvas are both up to date.
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       mkdirSync(dirname(resolve(shot.out)), { recursive: true });
-      await page.screenshot({ path: shot.out });
+      await page.screenshot({ path: shot.out, timeout: o.webgpu ? 120000 : 30000 });
       const st = await page.evaluate(() => {
         const s = window.__wayman.state();
         return { time: +s.time.toFixed(2), s: +s.player.s.toFixed(1), x: s.player.x, lane: s.player.lane, action: s.player.action,
