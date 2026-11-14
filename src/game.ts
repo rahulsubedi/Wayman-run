@@ -66,6 +66,12 @@ const DRONE_MIN_OFFSET = 1.3;
 const DRONE_X_LIMIT = 3.7;
 const DRONE_CLEAR_S = 1.3;
 const DRONE_CLEAR_X = 0.9;
+/** Height of the drone body's underside above its node (the model hovers ~2.35 m up). */
+const DRONE_BODY_BOTTOM = 1.7;
+/** View gap the drone settles at for the "caught" ending. */
+const DRONE_CATCH_GAP = 1.7;
+/** Node height below a roof top that puts the drone's underside ~0.5 m above that roof. */
+const DRONE_ROOF_BASE = DRONE_BODY_BOTTOM - 0.5;
 
 const SFX: Partial<Record<SimEvent['type'], SfxName>> = {
   coin: 'coin',
@@ -167,6 +173,8 @@ export class Game {
   private droneBase = 0;
   private droneSide: 1 | -1 = 1;
   private droneInit = false;
+  /** 0..1: the drone falls back out of shot while the hero flies (view only). */
+  private droneFly = 0;
   private readonly chaserView: ChaserState = { gap: CHASER_START_GAP, visible: false };
 
   private constructor(stage: Stage, uiRoot: HTMLElement, opts: GameOptions) {
@@ -191,6 +199,7 @@ export class Game {
     stage.world.addChild(this.hero.node, this.chaser.node);
     this.fx = new Fx(stage);
     this.cameraRig = new CameraRig(stage);
+    this.cameraRig.setObstacles(() => this.sim.state.entities);
 
     this.ui = new UI(
       uiRoot,
@@ -211,6 +220,9 @@ export class Game {
       if (this._mode === 'running') this.pause();
       else if (this._mode === 'paused' && !this.ui.isCounting) this.ui.beginResume();
     };
+
+    // The WebGPU watchdog reloads the page when the device is lost: keep the records first.
+    stage.onBackendFailure(() => this.saveRecords());
 
     const unlock = () => this.audio.unlock();
     window.addEventListener('pointerdown', unlock);
@@ -251,12 +263,12 @@ export class Game {
 
   start(seed: number = this.seed): void {
     this.seed = seed;
+    const fromMenu = this._mode === 'menu';
     this.resetWorld(seed);
     const p = this.sim.state.player;
-    // Swoop: snap the camera state onto the new hero, then blend from the current framing (menu
-    // orbit or game-over view) into the chase view.
-    this.cameraRig.snap(p);
-    this.cameraRig.setMode('run');
+    // Swoop from the menu framing into the chase view; after a game over (or a restart from the
+    // pause panel) the world has been rebuilt, so drop in from high behind instead.
+    this.cameraRig.beginRun(p, fromMenu ? 'swoop' : 'crane');
     this.cameraRig.kick(3);
     this.hero.setIdle(false);
     this._mode = 'running';
@@ -435,6 +447,7 @@ export class Game {
     this.chaserView.gap = CHASER_START_GAP;
     this.chaserView.visible = false;
     this.droneInit = false;
+    this.droneFly = 0;
   }
 
   /** Render one frame with a sample of every pooled model visible, so shaders compile at boot. */
@@ -503,7 +516,11 @@ export class Game {
     }
   }
 
-  /** Drone: placed behind the hero on the side away from vehicles, tracks the hero's height. */
+  /**
+   * Drone: placed behind the hero on the side away from solids, tracks the hero's height. With no
+   * free side it climbs over the vehicle roofs, and comes back down once a side is clear. In boost
+   * flight it falls back out of shot; for the 'caught' ending it swoops onto the hero.
+   */
   private updateChaser(st: SimState, dt: number): void {
     const p = st.player;
     const node = this.chaser.node;
@@ -511,33 +528,48 @@ export class Game {
     const caught = over && this.overReason === 'caught';
 
     // Gap: follows the sim, but eases in for the 'caught' ending so the catch is visible.
-    const gapGoal = st.chaser.gap;
+    // (The sim catches at 0.8 m; the view keeps it just behind his head so both stay readable.)
+    const gapGoal = caught ? Math.max(st.chaser.gap, DRONE_CATCH_GAP) : st.chaser.gap;
     if (caught) this.viewGap += (gapGoal - this.viewGap) * (1 - Math.exp(-dt * 9));
     else this.viewGap = gapGoal;
+    // In flight the camera rises with the hero: let the drone drop back behind the camera.
+    const flying = p.action === 'fly' || (this.droneFly > 0.05 && !p.grounded && !over);
+    this.droneFly += ((flying ? 1 : 0) - this.droneFly) * (1 - Math.exp(-dt * (flying ? 2.5 : 1.5)));
     const cs = this.chaserView;
-    cs.gap = this.viewGap;
+    cs.gap = this.viewGap + this.droneFly * 14;
     cs.visible = this._mode !== 'menu' && st.chaser.visible;
 
-    const ds = p.s - this.viewGap;
-    // Close to the camera the drone must stay inside the frame: tuck it in and lift it a little.
-    const camDist = Math.max(0, this.stage.camera.position.z - this.stage.worldZ(ds));
+    const ds = p.s - cs.gap;
+    // Close to the chase camera the drone must stay inside the frame: tuck it in and lift it a
+    // little (not for the endings, where the camera stands elsewhere).
+    const camDist = over ? 99 : Math.max(0, this.stage.camera.position.z - this.stage.worldZ(ds));
     const near = clamp((5.5 - camDist) / 2.5, 0, 1);
 
-    // Vertical base: standing surface, plus a fraction of the jump; high in boost flight.
+    // Vertical base: standing surface, plus a fraction of the jump; stays low in boost flight.
     const ground = p.groundY ?? 0;
-    const baseGoal = (p.action === 'fly' ? p.y * 0.85 : ground + Math.max(0, p.y - ground) * 0.3) + near * 0.8;
+    let baseGoal = ground + Math.max(0, p.y - ground) * 0.3 * (1 - this.droneFly) + near * 0.8;
 
-    // Lateral: pick the side with free space (no vehicle at the drone's height there).
-    const catchK = caught ? clamp((this.viewGap - 0.8) / 2, 0, 1) : 1;
+    // Lateral: pick the side with free space (no solid at the drone's height there).
+    const catchK = caught ? clamp((this.viewGap - DRONE_CATCH_GAP) / 2, 0, 1) : 1;
     const baseOffset = DRONE_SIDE_OFFSET - 0.7 * near;
-    const offset = caught ? 0.6 + (baseOffset - 0.6) * catchK : baseOffset;
-    if (!this.droneInit) this.droneSide = p.x > 0.4 ? -1 : 1;
-    if (caught) this.droneSide = 1; // the over-camera slides the hero left: keep the drone in frame beside him
-    const cur = this.sideCost(this.droneSide, p.x, ds, baseGoal, offset);
-    if (cur > 0) {
-      const other = this.sideCost(this.droneSide === 1 ? -1 : 1, p.x, ds, baseGoal, offset);
-      if (other < cur) this.droneSide = this.droneSide === 1 ? -1 : 1;
+    const offset = caught ? 0.35 + (baseOffset - 0.35) * catchK : baseOffset;
+    if (!this.droneInit) this.droneSide = p.x < -0.4 ? 1 : -1;
+    // Caught: beside the hero on the ending camera's side, so his body does not hide it.
+    const camSide = this.cameraRig.overSide;
+    if (caught && camSide !== 0) this.droneSide = camSide > 0 ? 1 : -1;
+    let raise = false;
+    if (!caught) {
+      const cur = this.sideCost(this.droneSide, p.x, ds, baseGoal, offset);
+      if (cur > 0) {
+        const otherSide = this.droneSide === 1 ? -1 : 1;
+        const other = this.sideCost(otherSide, p.x, ds, baseGoal, offset);
+        if (other < cur) this.droneSide = otherSide;
+        // No free side: fly over the roofs.
+        raise = Math.min(cur, other) > 0;
+      }
     }
+    if (raise) baseGoal = Math.max(baseGoal, this.solidTop(p.x, ds) - DRONE_ROOF_BASE);
+    if (caught) baseGoal = ground - 0.45 + 0.8 * catchK; // pounce: down over the hero, just behind his head
     const goalX = this.sideX(this.droneSide, p.x, offset);
     if (!this.droneInit) {
       this.droneX = goalX;
@@ -546,7 +578,9 @@ export class Game {
     }
     const kx = 1 - Math.exp(-dt * 5);
     this.droneX += (goalX - this.droneX) * kx;
-    this.droneBase += (baseGoal - this.droneBase) * (1 - Math.exp(-dt * (baseGoal > this.droneBase ? 3.5 : 4.5)));
+    // Climb quickly when it has to clear a roof, settle back more calmly.
+    const up = baseGoal > this.droneBase;
+    this.droneBase += (baseGoal - this.droneBase) * (1 - Math.exp(-dt * (up ? (raise ? 7 : 3.5) : caught ? 6 : 3)));
 
     node.position.set(this.droneX, this.droneBase, this.stage.worldZ(ds));
     // Seen from very close (intro, stumble) it would fill the screen: shrink it a little.
@@ -554,8 +588,23 @@ export class Game {
     node.scale.set(k, k, k);
     this.chaser.update(cs, this.viewTime, dt);
     // Searchlight follows the hero's chest, on roofs and in flight too.
-    const chest = p.y + (p.action === 'roll' ? 0.5 : 1.0);
+    const chest = p.y + (p.action === 'roll' ? 0.5 : over ? 0.4 : 1.0);
     this.chaser.setTarget(p.x - node.position.x, chest - node.position.y, this.stage.worldZ(p.s) - node.position.z);
+  }
+
+  /** Highest top of the solids around the drone's track position (for flying over them). */
+  private solidTop(heroX: number, ds: number): number {
+    let top = 0;
+    const list = this.sim.state.entities;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      const d = OBSTACLE_DIMS[e.kind as ObstacleKind] as (typeof OBSTACLE_DIMS)[ObstacleKind] | undefined;
+      if (!d) continue;
+      if (Math.abs(e.s - ds) > e.len / 2 + DRONE_CLEAR_S + 1) continue;
+      if (Math.abs(e.x - heroX) > d.w / 2 + DRONE_SIDE_OFFSET + DRONE_CLEAR_X) continue;
+      top = Math.max(top, e.y + d.h);
+    }
+    return top;
   }
 
   private sideX(side: 1 | -1, heroX: number, offset: number): number {
@@ -567,7 +616,7 @@ export class Game {
     const x = this.sideX(side, heroX, offset);
     let cost = Math.abs(x - heroX) < Math.min(DRONE_MIN_OFFSET, offset) ? 2 : 0;
     const list = this.sim.state.entities;
-    const droneBottom = base + 0.6;
+    const droneBottom = base + DRONE_BODY_BOTTOM;
     for (let i = 0; i < list.length; i++) {
       const e = list[i];
       const d = OBSTACLE_DIMS[e.kind as ObstacleKind] as (typeof OBSTACLE_DIMS)[ObstacleKind] | undefined;
@@ -635,7 +684,7 @@ export class Game {
           this.overTimer = 0;
           this.freeze = 0;
           this.cameraRig.shake(e.reason === 'caught' ? SHAKE.caught : SHAKE.crash);
-          this.cameraRig.setMode('over');
+          this.cameraRig.endRun(e.reason);
           this.audio.setLoop('boost', false);
           this.audio.setMusic('off'); // a beat of silence; menu music returns with the panel
           this.ui.setDanger(0);
@@ -646,13 +695,22 @@ export class Game {
     }
   }
 
-  private finishRun(): void {
+  /** Fold the current run into the best score / coins and store them (idempotent). */
+  private saveRecords(): boolean {
     const st = this.sim.state;
-    const stats = st.stats;
     const newBest = st.score > this.best.score;
     if (newBest) this.best.score = st.score;
     if (st.coins > this.best.coins) this.best.coins = st.coins;
     saveBest(this.best);
+    return newBest;
+  }
+
+  private finishRun(): void {
+    const st = this.sim.state;
+    const stats = st.stats;
+    const prevBest = this.best.score;
+    this.saveRecords();
+    const newBest = st.score > prevBest;
     this._mode = 'gameover';
     this.audio.setMusic('menu');
 

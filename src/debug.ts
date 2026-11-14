@@ -1,7 +1,8 @@
 // Test hook + URL params for automated checks (brief section 6).
 //
 // URL params: ?autostart=1  seed=<n>  autopilot=1  quality=low|medium|high  zone=<0..2>  mute=1
-//             renderer=webgl|webgpu (default: WebGPU when supported, else WebGL2)
+//             renderer=webgl|webgpu (default: WebGL2; `renderer=webgpu` opts in to WebGPU, with
+//             automatic fallback to WebGL2, see view/stage.ts)
 //             bend=0|1   curved-world effect off/on; bend=<down>,<side>  fixed bend (metres at 100 m)
 // window.__wayman = { ready, state(), start(), advance(seconds), setAutopilot(on), errors,
 //   game, mode(), pause(), resume(), home(), seed(n),
