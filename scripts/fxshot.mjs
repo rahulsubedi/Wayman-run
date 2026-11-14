@@ -9,7 +9,8 @@
 // Steps are separated by `|`:  advance:<seconds> (debug fast-forward, renders one frame),
 // js:<code> or jsfile:<path.js> (runs in the page with `game` = window.__wayman.game, then
 // renders one frame), shot:<file.png>.  Stop the ticker first for frame-exact effect captures.
-// Exits non-zero on page/console errors.
+// --webgpu launches Chromium with the SwiftShader WebGPU flags and adds renderer=webgpu; the active
+// backend is printed (`backend -> ...`). Exits non-zero on page/console errors.
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -20,11 +21,12 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const args = { params: '', width: 1280, height: 720, hideui: false, steps: '' };
+const args = { params: '', width: 1280, height: 720, hideui: false, webgpu: false, steps: '' };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const k = argv[i].replace(/^--/, '');
   if (k === 'hideui') args.hideui = true;
+  else if (k === 'webgpu') args.webgpu = true;
   else args[k] = typeof args[k] === 'number' ? Number(argv[++i]) : argv[++i];
 }
 
@@ -39,9 +41,12 @@ const server = createServer((req, res) => {
   createReadStream(file).pipe(res);
 });
 await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
-const url = `http://127.0.0.1:${server.address().port}/?${args.params}`;
+const query = [args.params, args.webgpu && !/(^|&)renderer=/.test(args.params) ? 'renderer=webgpu' : ''].filter(Boolean).join('&');
+const url = `http://127.0.0.1:${server.address().port}/?${query}`;
+const WEBGPU_FLAGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader',
+  '--use-webgpu-adapter=swiftshader', '--use-angle=swiftshader'];
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(args.webgpu ? { args: WEBGPU_FLAGS } : undefined);
 const page = await browser.newPage({ viewport: { width: args.width, height: args.height } });
 const errors = [];
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(`${m.type()}: ${m.text()}`); });
@@ -51,6 +56,7 @@ try {
   await page.goto(url);
   await page.waitForFunction(() => window.__wayman && window.__wayman.ready, null, { timeout: 60000 });
   await page.evaluate(() => window.__wayman.ready);
+  console.log('backend ->', await page.evaluate(() => window.__wayman.game?.stage?.backend ?? 'unknown'));
   if (args.hideui) await page.addStyleTag({ content: '#ui{display:none!important}' });
   for (const raw of args.steps.split('|').map((s) => s.trim()).filter(Boolean)) {
     const i = raw.indexOf(':');

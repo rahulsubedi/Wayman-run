@@ -111,8 +111,9 @@ const GL_END = /* glsl */ `{
   }
 }`;
 
-// Untested here (no WebGPU in the headless test browser): written against the engine's WGSL
-// template, where the vertex stage reads `global.*` / `camera.*` and writes `clipPosition`.
+// WGSL twin: the vertex stage reads `global.*` / `camera.*` and writes `clipPosition`. Checked on
+// WebGPU (SwiftShader adapter): same frames as GL at any bend (scripts/gpucompare.mjs); the fog
+// uniform is a Float32Array copied into the UBO on both backends, so the packed bits survive.
 const GPU_END = /* wgsl */ `{
   let wbBits = bitcast<u32>(global.uFogParams.z);
   if (wbBits >= 0x40000000u) {

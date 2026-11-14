@@ -11,8 +11,20 @@
 // - Curved world (geom/worldBend.ts): every fogged material bends away with distance as a pure
 //   projection warp. Driven automatically from the true track distance given to `rebase()`;
 //   `setWorldBend()` overrides it, `setWorldBendEnabled(false)` turns it off (no recompiles).
+// - Backend: `DEFAULT_BACKEND` decides what 'auto' (no `?renderer=`) means. It is WebGL2: the
+//   WebGPU path renders the same frames (verified frame by frame) but has only been run on a
+//   software adapter, gives no measured CPU win, and a lost device forces a page reload (below).
+//   `?renderer=webgpu` opts in. Safety net whenever WebGPU is attempted:
+//   1. init: `app.init` throwing on WebGPU falls back to WebGL2;
+//   2. probe: before the game builds anything, one frame with the project's custom-shader materials,
+//      a shadow-casting light and the post chain is rendered inside GPU error scopes; any
+//      validation / internal / out-of-memory error rebuilds the Application on WebGL2;
+//   3. watchdog: afterwards, a lost device (the engine cannot recover from one: its GPU objects stay
+//      bound to the dead device) or GPU errors early in the session (or in a burst later) store a
+//      flag and reload the page, which then starts on WebGL2 (see `gpuFallback.ts`).
+//   `stage.backend` is the backend actually running, `stage.fallbackReason` why WebGPU was not used.
 import '@pixi/3d'; // registers the 3D extensions; must be imported before app.init()
-import { Container3D, View3D } from '@pixi/3d';
+import { Container3D, DirectionalLight, Material3D, Mesh3D, View3D } from '@pixi/3d';
 import type { Camera3D, ShadowFilter, ShadowQuality } from '@pixi/3d';
 import { BloomEffect } from '@pixi/3d/extras';
 import { Application, Container, RendererType } from 'pixi.js';
@@ -20,11 +32,24 @@ import type { WebGLRenderer } from 'pixi.js';
 import type { Quality } from '../sim/types';
 import { BendCullFrustum, autoBend, installWorldBend, writeBendUniform } from './geom/worldBend';
 import type { BendValues } from './geom/worldBend';
+import { MeshBuilder } from './geom/meshBuilder';
+import { unlitVertexColor, vertexColorMaterial } from './geom/materials';
+import { fresnelGlow, glowVC } from './models/kit';
+import { sceneryMaterial } from './scenery/material';
+import { GpuWatchdog, gpuFailFlag, gpuFault, gpuPopScopes, gpuPushScopes, setGpuFailFlag } from './gpuFallback';
+import type { GpuDeviceLike } from './gpuFallback';
 
 export type { Quality } from '../sim/types';
 
 export type Backend = 'webgpu' | 'webgl';
+/** 'auto' = `DEFAULT_BACKEND`, with WebGPU only when the adapter supports it. */
 export type BackendPreference = Backend | 'auto';
+
+/**
+ * What 'auto' picks. 'webgpu' = WebGPU when the adapter supports it (with the probe / watchdog
+ * fallback), else WebGL2. Kept on 'webgl' until WebGPU has been checked on real GPUs.
+ */
+export const DEFAULT_BACKEND: Backend = 'webgl';
 
 /** Extent of the hero-following shadow box, metres relative to the hero (run direction is -Z). */
 export interface ShadowReach {
@@ -92,17 +117,84 @@ const AUTO_WARMUP_FRAMES = 60;
 const AUTO_SAMPLE_FRAMES = 150;
 const AUTO_SLOW_MS = 1000 / 42;
 
-async function pickBackend(pref: BackendPreference): Promise<Backend> {
-  if (pref === 'webgl') return 'webgl';
+async function pickBackend(pref: BackendPreference): Promise<{ backend: Backend; why: string | null }> {
+  if (pref === 'webgl') return { backend: 'webgl', why: null };
+  // A WebGPU failure earlier (this session, or a persistent one in the last days) means WebGL2,
+  // unless WebGPU was asked for explicitly (`?renderer=webgpu`).
+  const failed = gpuFailFlag();
+  if (pref === 'auto' && (failed || DEFAULT_BACKEND === 'webgl')) {
+    return { backend: 'webgl', why: failed ? `WebGPU failed earlier: ${failed}` : null };
+  }
   // @pixi/3d on WebGPU needs 'indirect-first-instance' or app.init throws: check first (documented guard).
   try {
     const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<{ features: Set<string> } | null> } }).gpu;
-    const adapter = await gpu?.requestAdapter();
-    if (adapter?.features.has('indirect-first-instance')) return 'webgpu';
-  } catch {
-    // fall through
+    if (!gpu) return { backend: 'webgl', why: 'WebGPU not available' };
+    const adapter = await gpu.requestAdapter();
+    if (adapter?.features.has('indirect-first-instance')) return { backend: 'webgpu', why: null };
+    return { backend: 'webgl', why: adapter ? 'adapter lacks indirect-first-instance' : 'no WebGPU adapter' };
+  } catch (err) {
+    return { backend: 'webgl', why: `WebGPU adapter request failed: ${errText(err)}` };
   }
-  return 'webgl';
+}
+
+function errText(err: unknown): string {
+  return String((err as Error)?.message ?? err);
+}
+
+function gpuDeviceOf(app: Application): GpuDeviceLike | null {
+  if (app.renderer.type !== RendererType.WEBGPU) return null;
+  return (app.renderer as unknown as { gpu?: { device?: GpuDeviceLike } }).gpu?.device ?? null;
+}
+
+/**
+ * Renders one frame with the materials whose shaders differ per backend (custom WGSL bits, world
+ * bend, vertex colours, fog, unlit, blended) plus a shadow-casting light and the post chain, inside
+ * GPU error scopes. Returns the first GPU error message, or null when the device reported nothing.
+ * The cached materials it touches are the game's own, so their pipelines are warm afterwards.
+ */
+async function probeWebGPU(stage: Stage, device: GpuDeviceLike): Promise<string | null> {
+  const fault = gpuFault();
+  const geo = new MeshBuilder({ seed: 1 }).box(1, 1, 1, { color: 0xffffff }).build();
+  const mats = [vertexColorMaterial(), unlitVertexColor(), sceneryMaterial(), glowVC(), fresnelGlow(0x66ddff)];
+  const probe = new Container3D({ label: 'gpu-probe' });
+  mats.forEach((material, i) => {
+    probe.addChild(new Mesh3D({ geometry: geo, material, position: { x: (i - 2) * 1.2, y: 0, z: -6 } }));
+  });
+  if (fault === 'shader') {
+    // test hook: a material whose WGSL does not compile
+    const broken = '{ albedo = waymanUndefinedSymbol; }';
+    const material = new Material3D({
+      vertexColors: true,
+      extraBits: [{ name: 'waymanBrokenProbe', gpu: { fragment: { material: broken } }, gl: { fragment: { material: broken } } }],
+    });
+    probe.addChild(new Mesh3D({ geometry: geo, material, position: { x: 0, y: 1.2, z: -6 } }));
+  }
+  const sun = new DirectionalLight({ intensity: 1, castShadow: true, position: { x: 2, y: 6, z: -2 } });
+  sun.lookAt({ x: 0, y: 0, z: -6 });
+  probe.addChild(sun);
+  stage.world.addChild(probe);
+  const bloom = stage.bloom;
+  const bloomWas = bloom?.enabled ?? false;
+  gpuPushScopes(device);
+  let error: string | null = null;
+  try {
+    if (bloom) bloom.enabled = true; // compile the post chain even on tiers without it
+    if (fault === 'probe') device.createBuffer({ size: 4, usage: 0 }); // test hook: a validation error
+    stage.app.render();
+    await device.queue.onSubmittedWorkDone();
+  } catch (err) {
+    error = `probe frame threw: ${errText(err)}`;
+  }
+  error = (await gpuPopScopes(device)) ?? error;
+  try {
+    if (bloom) bloom.enabled = bloomWas;
+  } catch {
+    // ignore
+  }
+  stage.world.removeChild(probe);
+  probe.destroy({ children: true });
+  geo.destroy();
+  return error;
 }
 
 function targetResolution(q: Quality): number {
@@ -118,6 +210,8 @@ export class Stage {
   /** 2D layer above the 3D view (screen-space effects). Children are laid out in CSS pixels. */
   readonly overlay: Container;
   readonly backend: Backend;
+  /** Why WebGPU is not in use although it was preferred (null when on the preferred backend). */
+  fallbackReason: string | null = null;
   /** False on WebGL2 without EXT_color_buffer_float: float post effects would throw there. */
   readonly canDrawFloat: boolean;
   /** Bloom pass, or null when unsupported. Toggled by quality; tuned by Atmosphere. */
@@ -134,6 +228,7 @@ export class Stage {
   private qualityListeners: QualityListener[] = [];
   private beforeRender: Array<() => void> = [];
   private readonly onResize = () => this.resize(); // devicePixelRatio can change (zoom, monitor)
+  private watchdog: GpuWatchdog | null = null;
 
   // curved world
   /** Bend actually applied this frame (0/0 when disabled); read by the cull frustum. */
@@ -220,6 +315,7 @@ export class Stage {
     // Runs at the start of every render (ticker or manual), after all game updates: things that
     // must match the final camera pose of the frame (sky dome, shadow box) hook in here.
     this.view.onRender = () => {
+      this.watchdog?.frame();
       this.updateBend();
       for (const cb of this.beforeRender) cb();
     };
@@ -228,12 +324,18 @@ export class Stage {
     this.resize();
   }
 
-  /** Creates the Application (WebGPU when safely available, else WebGL2) and the View3D. */
+  /**
+   * Creates the Application (WebGPU when safely available, else WebGL2) and the View3D. Any WebGPU
+   * failure during init or the probe frame rebuilds everything on WebGL2 (see the header).
+   */
   static async create(opts: StageOptions): Promise<Stage> {
     const quality = opts.quality ?? 'high';
     const preset = QUALITY_PRESETS[quality];
-    let backend = await pickBackend(opts.preference ?? 'auto');
+    const pref = opts.preference ?? 'auto';
+    const picked = await pickBackend(pref);
+    let why = picked.why;
     const init = async (preference: Backend): Promise<Application> => {
+      if (preference === 'webgpu' && gpuFault() === 'init') throw new Error('test hook: WebGPU init failure');
       const app = new Application();
       await app.init({
         preference,
@@ -246,18 +348,62 @@ export class Stage {
       });
       return app;
     };
-    let app: Application;
-    try {
-      app = await init(backend);
-    } catch (err) {
-      if (backend === 'webgl') throw err;
-      console.warn('WebGPU init failed, falling back to WebGL2', err);
-      backend = 'webgl';
-      app = await init('webgl');
+    const failed = (reason: string) => {
+      console.warn(`[stage] ${reason}; falling back to WebGL2`);
+      why = reason;
+    };
+
+    let app: Application | null = null;
+    if (picked.backend === 'webgpu') {
+      try {
+        app = await init('webgpu');
+      } catch (err) {
+        failed(`WebGPU init failed: ${errText(err)}`);
+        setGpuFailFlag(why ?? 'WebGPU init failed', false); // this tab session: skip the retry on reload
+      }
     }
-    backend = app.renderer.type === RendererType.WEBGPU ? 'webgpu' : 'webgl';
+    if (app && app.renderer.type === RendererType.WEBGPU) {
+      const device = gpuDeviceOf(app);
+      let stage: Stage | null = null;
+      let error: string | null = device ? null : 'WebGPU renderer has no device';
+      if (device) {
+        try {
+          stage = new Stage(app, 'webgpu', quality);
+          error = await probeWebGPU(stage, device);
+        } catch (err) {
+          error = `WebGPU setup failed: ${errText(err)}`;
+        }
+      }
+      if (!error && stage && device) {
+        opts.parent.appendChild(app.canvas);
+        stage.watchdog = new GpuWatchdog(device, pref);
+        return stage;
+      }
+      failed(error ?? 'WebGPU probe failed');
+      // GPU errors on the probe are a property of browser + GPU + build: remember them for days
+      setGpuFailFlag(why ?? 'WebGPU probe failed', true);
+      try {
+        if (stage) stage.destroy();
+        else app.destroy(true);
+      } catch {
+        // a broken device may throw while tearing down: the WebGL2 app below is independent
+      }
+      app = null;
+    }
+    app ??= await init('webgl');
+    const backend: Backend = app.renderer.type === RendererType.WEBGPU ? 'webgpu' : 'webgl';
     opts.parent.appendChild(app.canvas);
-    return new Stage(app, backend, quality);
+    const stage = new Stage(app, backend, quality);
+    stage.fallbackReason = backend === 'webgl' && pref !== 'webgl' ? why : null;
+    return stage;
+  }
+
+  /**
+   * Called (just before the page reloads onto WebGL2) when the WebGPU watchdog gives up on the
+   * device, so the game can stop or save what it needs. The reload itself is not cancellable.
+   */
+  onBackendFailure(cb: (reason: string) => void): void {
+    this.watchdog?.listeners.push(cb);
   }
 
   get camera(): Camera3D {
@@ -482,6 +628,8 @@ export class Stage {
   }
 
   destroy(): void {
+    this.watchdog?.dispose();
+    this.watchdog = null;
     window.removeEventListener('resize', this.onResize);
     this.app.destroy(true);
   }

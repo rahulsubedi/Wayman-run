@@ -222,6 +222,7 @@ export class Fx {
     this.streakAcc = this.exhaustAcc = this.magnetAcc = 0;
     this.support = 0;
     this.wasDead = false;
+    this.seed = 1; // every run replays the same effect randomness (deterministic captures)
   }
 
   /** Live particle count (debug / perf overlay). */
