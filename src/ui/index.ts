@@ -45,7 +45,11 @@ type Screen = 'menu' | 'hud' | 'pause' | 'gameover' | 'countdown';
 const QUALITIES: readonly Quality[] = ['low', 'medium', 'high'];
 const QUALITY_LABEL: Record<Quality, string> = { low: 'Low', medium: 'Med', high: 'High' };
 const CHIP_STEPS = 40;
-const POPUP_POOL = 4;
+/** Popup rules: two fixed slots (no overlap), low priority dropped when busy, high ones queued briefly. */
+const POPUP_SLOTS = 2;
+const POPUP_MS = 950;
+const POPUP_QUEUE_MAX = 2;
+const POPUP_QUEUE_TTL = 1300;
 const CONFETTI = 36;
 const GAMEOVER_INPUT_LOCK_MS = 650;
 
@@ -54,6 +58,14 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+/** 0 distance marks, 1 near miss, 3 power-up labels / shield save, 4 stumble. */
+function popupPriority(text: string, kind: PopupKind): number {
+  if (kind === 'danger') return 4;
+  if (kind === 'info') return 0;
+  if (kind === 'great' && /near miss/i.test(text)) return 1;
+  return 3;
 }
 
 function icon(name: IconName): HTMLSpanElement {
@@ -115,7 +127,11 @@ export class UI {
   private readonly toastEl: HTMLElement;
   private readonly toastText: Text;
   private readonly popups: HTMLElement[] = [];
-  private popupIdx = 0;
+  private readonly popupUntil: number[] = [];
+  private readonly popupPrio: number[] = [];
+  private readonly popupText: string[] = [];
+  private popupQueue: { text: string; kind: PopupKind; prio: number; at: number }[] = [];
+  private popupPump = 0;
 
   private readonly muteBtns: HTMLButtonElement[] = [];
   private readonly qualityBtns: HTMLButtonElement[] = [];
@@ -296,9 +312,9 @@ export class UI {
     for (let i = 0; i < CONFETTI; i++) {
       const c = el('i', '');
       const a = (i / CONFETTI) * Math.PI * 2 + Math.random() * 0.5;
-      const dist = 28 + Math.random() * 42;
-      c.style.setProperty('--dx', `${(Math.cos(a) * dist).toFixed(1)}vmin`);
-      c.style.setProperty('--dy', `${(Math.sin(a) * dist * 0.8 - 14).toFixed(1)}vmin`);
+      const dist = 0.4 + Math.random() * 0.6;
+      c.style.setProperty('--fx', (Math.cos(a) * dist).toFixed(3));
+      c.style.setProperty('--fy', (Math.sin(a) * dist * 0.7 - 0.2).toFixed(3));
       c.style.setProperty('--rot', `${Math.round(Math.random() * 720 - 360)}deg`);
       c.style.setProperty('--del', `${(Math.random() * 0.25).toFixed(2)}s`);
       c.style.setProperty('--c', ['#ffd23f', '#17c3b2', '#ff8a1f', '#fff3d6', '#ff5d4d'][i % 5]);
@@ -350,14 +366,21 @@ export class UI {
     toastIn.append(this.toastText);
     this.toastEl.append(el('i', 'wr-toast-flag'), toastIn, el('i', 'wr-toast-flag wr-r'));
     const popLayer = el('div', 'wr-popups');
-    for (let i = 0; i < POPUP_POOL; i++) {
+    for (let i = 0; i < POPUP_SLOTS; i++) {
       const p = el('div', 'wr-popup');
       this.popups.push(p);
+      this.popupUntil.push(0);
+      this.popupPrio.push(0);
+      this.popupText.push('');
       popLayer.append(p);
     }
 
     this.screens = { menu, hud, pause, gameover: over, countdown: count };
-    root.append(menu, hud, count, pause, over, popLayer, this.toastEl);
+    // zone banner + popups live in the HUD flow, under the power-up chips (never over them)
+    const feed = el('div', 'wr-feed');
+    feed.append(this.toastEl, popLayer);
+    hud.append(feed);
+    root.append(menu, hud, count, pause, over);
     this.renderMute();
     this.renderQuality();
     this.show(null);
@@ -453,20 +476,81 @@ export class UI {
 
   /** Zone-name banner (about 2 s). */
   toast(text: string): void {
+    if (this.current !== 'hud' && this.current !== 'countdown') return;
     this.toastText.data = text;
     this.toastFlip = !this.toastFlip;
     this.toastEl.classList.remove('wr-show-a', 'wr-show-b');
     this.toastEl.classList.add(this.toastFlip ? 'wr-show-a' : 'wr-show-b');
   }
 
-  /** Short floating popup near the top third of the screen, e.g. popup('Near miss!', 'great'). */
+  /**
+   * Short floating popup under the zone-banner slot, e.g. popup('Near miss!', 'great').
+   * At most two are visible (fixed slots, never overlapping). Near misses and distance marks
+   * are dropped while both slots are busy; other popups wait up to ~1.3 s (or replace a
+   * lower-priority one). Ignored unless the HUD is showing.
+   */
   popup(text: string, kind: PopupKind = 'good'): void {
-    const p = this.popups[this.popupIdx];
-    this.popupIdx = (this.popupIdx + 1) % this.popups.length;
+    if (this.current !== 'hud' && this.current !== 'countdown') return;
+    const prio = popupPriority(text, kind);
+    const now = performance.now();
+    // same text still visible: just refresh it
+    for (let i = 0; i < this.popups.length; i++) {
+      if (this.popupText[i] === text && now < this.popupUntil[i]) {
+        this.playPopup(i, text, kind, prio, now);
+        return;
+      }
+    }
+    let slot = -1;
+    for (let i = 0; i < this.popups.length; i++) if (now >= this.popupUntil[i]) { slot = i; break; }
+    if (slot < 0) {
+      if (prio <= 1) return; // busy: drop near-miss / distance popups
+      let low = 0;
+      for (let i = 1; i < this.popups.length; i++) if (this.popupPrio[i] < this.popupPrio[low]) low = i;
+      if (this.popupPrio[low] < prio) slot = low;
+    }
+    if (slot >= 0) {
+      this.playPopup(slot, text, kind, prio, now);
+      return;
+    }
+    // all slots hold equal/higher priority popups: wait for one to finish
+    if (this.popupQueue.length >= POPUP_QUEUE_MAX) this.popupQueue.shift();
+    this.popupQueue.push({ text, kind, prio, at: now });
+    this.schedulePopupPump(now);
+  }
+
+  private playPopup(slot: number, text: string, kind: PopupKind, prio: number, now: number): void {
+    const p = this.popups[slot];
+    this.popupUntil[slot] = now + POPUP_MS;
+    this.popupPrio[slot] = prio;
+    this.popupText[slot] = text;
     p.textContent = text;
     p.className = 'wr-popup';
     void p.offsetWidth; // restart the animation
     p.className = `wr-popup wr-go wr-pop-${kind}`;
+  }
+
+  private schedulePopupPump(now: number): void {
+    window.clearTimeout(this.popupPump);
+    let next = Infinity;
+    for (const u of this.popupUntil) next = Math.min(next, u);
+    this.popupPump = window.setTimeout(() => {
+      const t = performance.now();
+      this.popupQueue = this.popupQueue.filter((q) => t - q.at < POPUP_QUEUE_TTL);
+      const q = this.popupQueue.shift();
+      if (q && (this.current === 'hud' || this.current === 'countdown')) this.popup(q.text, q.kind);
+      if (this.popupQueue.length) this.schedulePopupPump(performance.now());
+    }, Math.max(20, next - now + 10));
+  }
+
+  private clearTransient(): void {
+    window.clearTimeout(this.popupPump);
+    this.popupQueue = [];
+    for (let i = 0; i < this.popups.length; i++) {
+      this.popups[i].className = 'wr-popup';
+      this.popupUntil[i] = 0;
+      this.popupText[i] = '';
+    }
+    this.toastEl.classList.remove('wr-show-a', 'wr-show-b');
   }
 
   /** Reflect a mute state changed elsewhere (does not call onMute). */
@@ -504,8 +588,7 @@ export class UI {
   /** Clear transient feedback (popups, toast, danger meter, countdown): new run / back to menu. */
   reset(): void {
     this.cancelCountdown();
-    for (const p of this.popups) p.className = 'wr-popup';
-    this.toastEl.classList.remove('wr-show-a', 'wr-show-b');
+    this.clearTransient();
     this.setDanger(0);
   }
 
@@ -700,6 +783,7 @@ export class UI {
     if (screen !== 'countdown') this.cancelCountdown();
     if (screen !== 'gameover') cancelAnimationFrame(this.countRaf);
     this.current = screen;
+    if (screen !== 'hud' && screen !== 'countdown') this.clearTransient();
     for (const [k, e] of Object.entries(this.screens)) {
       const vis = k === screen || (screen === 'countdown' && k === 'hud');
       e.classList.toggle('wr-visible', vis);
