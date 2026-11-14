@@ -12,6 +12,8 @@ export interface ObstacleBuilders {
   glass?: MeshBuilder;
   /** Steady emissive parts (headlights, signs). */
   glow?: MeshBuilder;
+  /** Parts lit only at night (bus interiors): emission scaled by the time of day. */
+  night?: MeshBuilder;
   glowColor?: number;
   glowStrength?: number;
   /** Blinking lamps (toggled by updateObstacleVisual). */

@@ -477,3 +477,30 @@ export function beamVC(gain = 1.6): FlatMaterial {
     return m;
   });
 }
+
+// ------------------------------------------------------------------ night-lit interiors
+
+const NIGHT_CODE = '{ emissive += albedo * material.nightGlow; }';
+const nightBit: ShaderBit = {
+  name: 'waymanNightLit',
+  bindings: { material: { nightGlow: 'f32' } },
+  gpu: { fragment: { material: NIGHT_CODE } },
+  gl: { fragment: { material: NIGHT_CODE } },
+};
+
+/**
+ * Lit vertex-colour material whose emission follows the time of day (Atmosphere drives it with
+ * setNightGlow): bus interiors and cab lights are plain dim colours by day and glow warm at night.
+ */
+export function nightVC(): Material3D {
+  return cachedMat('models:night', () => {
+    const m = new Material3D({ baseColor: 0xffffff, vertexColors: true, roughness: 0.6, metallic: 0, extraBits: [nightBit] });
+    m.data.nightGlow = 0;
+    return m;
+  });
+}
+
+/** 0 by day .. ~4 at night (emission = albedo * k). */
+export function setNightGlow(k: number): void {
+  nightVC().data.nightGlow = k;
+}

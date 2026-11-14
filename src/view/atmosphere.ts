@@ -14,7 +14,7 @@ import type { Fog, Hemisphere } from '@pixi/3d';
 import { ZONE_COUNT } from '../sim/config';
 import type { Quality } from '../sim/types';
 import { mixHex } from './geom/color';
-import { setHeroLook, type HeroLook } from './models/kit';
+import { setHeroLook, setNightGlow, type HeroLook } from './models/kit';
 import { Sky, type SkyState } from './sky/sky';
 import type { QualitySettings, Stage } from './stage';
 
@@ -44,6 +44,8 @@ export interface ZonePalette {
   sky: Omit<SkyState, 'haze'>;
   /** Hero readability: rim light, albedo lift and hi-vis accent glow (see models/kit HeroLook). */
   hero: HeroLook;
+  /** Emission of night-lit interiors (bus windows): 0 by day. */
+  interiors: number;
 }
 
 export const ZONE_PALETTES: readonly ZonePalette[] = [
@@ -61,6 +63,7 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
       cloudTint: 0xffffff, clouds: 1,
     },
     hero: { rimColor: 0xfff4e0, rim: 0.5, lift: 0.03, glow: 0.2 },
+    interiors: 0,
   },
   // 1 Harbor Front: golden hour, low orange sun front-right, long shadows across the road.
   {
@@ -79,6 +82,7 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
     },
     // Low sun ahead-left: a warm back-light rim on the hero, as the sun really sits behind him.
     hero: { rimColor: 0xffc27e, rim: 1.1, lift: 0.06, glow: 0.4 },
+    interiors: 0.8,
   },
   // 2 Night Bazaar: cool moonlight key, warm lantern fill, purple-blue fog, stars.
   {
@@ -96,6 +100,7 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
     // Night: cool moonlight rim + a lift so the hero never sinks into the blue road, and his
     // hi-vis bands / soles / satchel reflector glow.
     hero: { rimColor: 0xc4dcff, rim: 1.4, lift: 0.16, glow: 1.15 },
+    interiors: 4,
   },
 ];
 
@@ -231,6 +236,7 @@ export class Atmosphere {
     h.lift = lerp(ha.lift, hb.lift, t);
     h.glow = lerp(ha.glow, hb.glow, t);
     setHeroLook(h);
+    setNightGlow(lerp(a.interiors, b.interiors, t));
   }
 
   private aim(light: DirectionalLight, da: V3, db: V3, t: number): void {
