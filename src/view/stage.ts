@@ -8,6 +8,9 @@
 // - `overlay` is a 2D layer drawn above the 3D view (screen flashes, vignette).
 // - Quality tiers (`QUALITY_PRESETS`) drive shadows, post, resolution, effect density; an optional
 //   frame-time watchdog (`enableAutoQuality` + `sampleFrameTime`) steps the tier down on slow devices.
+// - Curved world (geom/worldBend.ts): every fogged material bends away with distance as a pure
+//   projection warp. Driven automatically from the true track distance given to `rebase()`;
+//   `setWorldBend()` overrides it, `setWorldBendEnabled(false)` turns it off (no recompiles).
 import '@pixi/3d'; // registers the 3D extensions; must be imported before app.init()
 import { Container3D, View3D } from '@pixi/3d';
 import type { Camera3D, ShadowFilter, ShadowQuality } from '@pixi/3d';
@@ -15,6 +18,8 @@ import { BloomEffect } from '@pixi/3d/extras';
 import { Application, Container, RendererType } from 'pixi.js';
 import type { WebGLRenderer } from 'pixi.js';
 import type { Quality } from '../sim/types';
+import { BendCullFrustum, autoBend, installWorldBend, writeBendUniform } from './geom/worldBend';
+import type { BendValues } from './geom/worldBend';
 
 export type { Quality } from '../sim/types';
 
@@ -130,6 +135,15 @@ export class Stage {
   private beforeRender: Array<() => void> = [];
   private readonly onResize = () => this.resize(); // devicePixelRatio can change (zoom, monitor)
 
+  // curved world
+  /** Bend actually applied this frame (0/0 when disabled); read by the cull frustum. */
+  private readonly bendNow: BendValues = { down: 0, side: 0 };
+  private readonly bendManual: BendValues = { down: 0, side: 0 };
+  private bendAuto = true;
+  private bendOn = true;
+  private bendInstalled = false;
+  private trackPos = 0;
+
   // auto quality
   private autoOn = false;
   private autoInert = false;
@@ -196,9 +210,17 @@ export class Stage {
     cam.near = 0.3;
     cam.far = CAMERA_FAR;
 
+    // Curved world: hook every scene material before the first frame (one shader variant, so
+    // tuning or toggling never recompiles) and cull against a frustum widened for the bend.
+    this.bendInstalled = installWorldBend(app.renderer);
+    if (this.bendInstalled) {
+      cam.cullFrustum = new BendCullFrustum(cam, this.bendNow, () => this.view.fog?.far ?? CAMERA_FAR);
+    }
+
     // Runs at the start of every render (ticker or manual), after all game updates: things that
     // must match the final camera pose of the frame (sky dome, shadow box) hook in here.
     this.view.onRender = () => {
+      this.updateBend();
       for (const cb of this.beforeRender) cb();
     };
 
@@ -356,6 +378,7 @@ export class Stage {
    * REBASE_DISTANCE steps and notifies listeners. Returns true when a rebase happened.
    */
   rebase(playerS: number): boolean {
+    this.trackPos = playerS;
     if (playerS - this._originS < REBASE_DISTANCE) return false;
     const step = Math.floor((playerS - this._originS) / REBASE_DISTANCE) * REBASE_DISTANCE;
     this.setOrigin(this._originS + step);
@@ -390,6 +413,57 @@ export class Stage {
       const i = this.beforeRender.indexOf(cb);
       if (i >= 0) this.beforeRender.splice(i, 1);
     };
+  }
+
+  // ------------------------------------------------------------ curved world
+
+  /**
+   * Override the curved-world amount (metres of offset at 100 m ahead of the camera: `down` drop,
+   * `side` swing, + = right). Missing fields keep their current value. `null` returns to the
+   * automatic driver (the default), which follows the track distance passed to `rebase()`.
+   */
+  setWorldBend(b: Partial<BendValues> | null): void {
+    if (b === null) {
+      this.bendAuto = true;
+      return;
+    }
+    if (this.bendAuto) {
+      this.bendManual.down = this.bendNow.down;
+      this.bendManual.side = this.bendNow.side;
+      if (!this.bendOn) autoBend(this.trackPos, this.bendManual);
+    }
+    this.bendAuto = false;
+    if (b.down !== undefined) this.bendManual.down = b.down;
+    if (b.side !== undefined) this.bendManual.side = b.side;
+  }
+
+  /** Turn the curved world on/off (quality or debug switch, e.g. `?bend=0`). Free at any time. */
+  setWorldBendEnabled(on: boolean): void {
+    this.bendOn = on;
+  }
+
+  /** The bend applied to the current frame (both 0 when disabled or unsupported). */
+  get worldBend(): Readonly<BendValues> {
+    return this.bendNow;
+  }
+
+  /** Whether the curved world is on (and supported by this engine build). */
+  get worldBendEnabled(): boolean {
+    return this.bendOn && this.bendInstalled;
+  }
+
+  private updateBend(): void {
+    const b = this.bendNow;
+    if (!this.bendOn || !this.bendInstalled) {
+      b.down = 0;
+      b.side = 0;
+    } else if (this.bendAuto) {
+      autoBend(this.trackPos, b);
+    } else {
+      b.down = this.bendManual.down;
+      b.side = this.bendManual.side;
+    }
+    writeBendUniform(this.view.fog, b, this.bendOn && this.bendInstalled);
   }
 
   // ------------------------------------------------------------- rendering
