@@ -517,6 +517,7 @@
 .wr-pop-good { color: var(--gold); }
 .wr-pop-great { color: var(--teal-l); }
 .wr-pop-info { color: var(--cream); }
+.wr-pop-danger { color: var(--red); }
 .wr-go { animation: wr-popup 0.95s cubic-bezier(0.2, 1, 0.4, 1) both; }
 @keyframes wr-popup { 0% { opacity: 0; transform: translate(-50%, 0.6em) scale(0.6); } 18% { opacity: 1; transform: translate(-50%, 0) scale(1.15); } 30% { transform: translate(-50%, -0.1em) scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -1.8em) scale(1); } }
 
@@ -524,4 +525,38 @@
 @media (prefers-reduced-motion: reduce) {
   .wr-ui *, .wr-ui *::before, .wr-ui *::after { animation-duration: 0.001s !important; animation-iteration-count: 1 !important; animation-delay: 0s !important; transition-duration: 0.001s !important; }
   .wr-confetti { display: none !important; }
+}
+
+/* ------------------------------------------------------------ danger meter + run facts */
+.wr-danger {
+  display: none;
+  align-self: center;
+  align-items: center;
+  gap: 0.6em;
+  margin-top: 0.5em;
+  padding: 0.18em 0.9em 0.2em;
+  border-radius: 999px;
+  background: rgba(122, 20, 14, 0.78);
+  box-shadow: 0 0 0 0.1em rgba(255, 190, 180, 0.55), 0 0.2em 0.5em rgba(0, 0, 0, 0.35);
+  animation: wr-danger 0.55s ease-in-out infinite;
+}
+.wr-danger.wr-on { display: inline-flex; }
+.wr-danger-k { font-size: 0.85em; letter-spacing: 0.22em; color: #ffd9d2; font-weight: 900; }
+.wr-danger-bar { width: 6em; height: 0.55em; border-radius: 999px; background: rgba(255, 255, 255, 0.2); overflow: hidden; }
+.wr-danger-bar i { display: block; height: 100%; width: 100%; transform-origin: left center; background: linear-gradient(90deg, #ff9a8a, #ff4a3a); border-radius: 999px; transition: transform 0.12s linear; }
+@keyframes wr-danger { 50% { transform: scale(1.06); box-shadow: 0 0 0 0.1em rgba(255, 190, 180, 0.8), 0 0 1em 0.2em rgba(255, 70, 50, 0.6); } }
+@media (orientation: landscape) and (max-height: 520px) {
+  .wr-danger { position: absolute; left: 50%; top: calc(max(env(safe-area-inset-top), 0.7em) + 4.4em); transform: translateX(-50%); margin: 0; }
+  @keyframes wr-danger { 50% { box-shadow: 0 0 0 0.1em rgba(255, 190, 180, 0.8), 0 0 1em 0.2em rgba(255, 70, 50, 0.6); } }
+}
+
+.wr-over-extras { display: flex; gap: 0.5em; flex-wrap: wrap; justify-content: center; max-width: 24em; }
+.wr-over-extras.wr-hidden { display: none; }
+.wr-xstat { display: flex; flex-direction: column; align-items: center; min-width: 4.6em; padding: 0.3em 0.7em 0.35em; border-radius: 0.8em; background: rgba(8, 16, 34, 0.45); box-shadow: inset 0 0 0 0.1em rgba(143, 247, 232, 0.22); }
+.wr-xstat-v { font-size: 1.5em; font-weight: 900; line-height: 1.1; color: #fff; font-variant-numeric: tabular-nums; }
+.wr-xstat-k { font-size: 0.7em; letter-spacing: 0.14em; text-transform: uppercase; color: var(--teal-l); white-space: nowrap; }
+@media (orientation: landscape) and (max-height: 520px) {
+  .wr-over-extras { max-width: 30em; gap: 0.35em; }
+  .wr-xstat { min-width: 3.8em; padding: 0.15em 0.5em 0.2em; }
+  .wr-xstat-v { font-size: 1.2em; }
 }

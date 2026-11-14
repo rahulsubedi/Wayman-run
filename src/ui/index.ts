@@ -25,6 +25,8 @@ export interface GameOverInfo {
   best: number;
   newBest: boolean;
   reason: string;
+  /** Fun per-run facts shown under the score, e.g. { label: 'Near misses', value: '7' }. */
+  extras?: readonly { label: string; value: string }[];
 }
 
 export interface UIOptions {
@@ -36,7 +38,7 @@ export interface UIOptions {
   onClick?: () => void;
 }
 
-export type PopupKind = 'good' | 'great' | 'info';
+export type PopupKind = 'good' | 'great' | 'info' | 'danger';
 
 type Screen = 'menu' | 'hud' | 'pause' | 'gameover' | 'countdown';
 
@@ -104,6 +106,10 @@ export class UI {
   private readonly overPanel: HTMLElement;
   private readonly overBadge: HTMLElement;
   private readonly confettiEl: HTMLElement;
+  private readonly overExtras: HTMLElement;
+  private readonly dangerEl: HTMLElement;
+  private readonly dangerBar: HTMLElement;
+  private lastDanger = -1;
   private readonly countNum: HTMLElement;
 
   private readonly toastEl: HTMLElement;
@@ -253,7 +259,12 @@ export class UI {
     this.chips.push(this.makeChip(chipRow, 'rocket', 'wr-chip-boost', true));
     this.chips.push(this.makeChip(chipRow, 'x2', 'wr-chip-mult', true));
     this.chips.push(this.makeChip(chipRow, 'shield', 'wr-chip-shield', false));
-    hud.append(top, chipRow);
+    this.dangerEl = el('div', 'wr-danger');
+    this.dangerBar = el('i', '');
+    const dBar = el('span', 'wr-danger-bar');
+    dBar.append(this.dangerBar);
+    this.dangerEl.append(el('span', 'wr-danger-k', 'WATCH OUT'), dBar);
+    hud.append(top, this.dangerEl, chipRow);
 
     // ----------------------------------------------------------------- pause
     const pause = el('div', 'wr-screen wr-dim');
@@ -302,6 +313,7 @@ export class UI {
     const scoreV = el('div', 'wr-over-score');
     this.overScoreText = document.createTextNode('0');
     scoreV.append(this.overScoreText);
+    this.overExtras = el('div', 'wr-over-extras');
     const stats = el('div', 'wr-over-stats');
     const s1 = el('div', 'wr-stat wr-stat-lg');
     s1.append(icon('coin'), el('span', 'wr-stat-k', 'COINS'));
@@ -325,6 +337,7 @@ export class UI {
       scoreK,
       scoreV,
       stats,
+      this.overExtras,
       button([icon('restart'), label('PLAY AGAIN')], 'wr-primary', () => this.h.onRestart()),
       orow,
     );
@@ -371,6 +384,7 @@ export class UI {
   }
 
   showHud(): void {
+    this.setDanger(0);
     this.lastScore = this.lastCoins = this.lastMult = -1;
     for (const c of this.chips) {
       c.q = -1;
@@ -394,6 +408,13 @@ export class UI {
     this.confettiEl.classList.toggle('wr-on', r.newBest);
     this.overCoinsText.data = fmt(r.coins);
     this.overBestText.data = fmt(r.best);
+    this.overExtras.textContent = '';
+    for (const x of r.extras ?? []) {
+      const c = el('div', 'wr-xstat');
+      c.append(el('span', 'wr-xstat-v', x.value), el('span', 'wr-xstat-k', x.label));
+      this.overExtras.append(c);
+    }
+    this.overExtras.classList.toggle('wr-hidden', !(r.extras && r.extras.length));
     this.overShownAt = performance.now();
     this.show('gameover');
     // restart the entrance animations
@@ -456,6 +477,36 @@ export class UI {
 
   get isMuted(): boolean {
     return this.muted;
+  }
+
+  /**
+   * Stumble danger meter under the score: `fraction` 1 = just stumbled, 0 = safe (hidden).
+   * Cheap to call every frame.
+   */
+  setDanger(fraction: number): void {
+    const q = fraction <= 0 ? 0 : Math.max(0.02, Math.round(fraction * 50) / 50);
+    if (q === this.lastDanger) return;
+    this.lastDanger = q;
+    this.dangerEl.classList.toggle('wr-on', q > 0);
+    this.dangerBar.style.transform = `scaleX(${q})`;
+  }
+
+  /** Start the 3-2-1 resume countdown (no-op if one is already running). */
+  beginResume(): void {
+    if (this.current === 'pause') this.resumeWithCountdown();
+  }
+
+  /** True while the 3-2-1 is running. */
+  get isCounting(): boolean {
+    return this.counting;
+  }
+
+  /** Clear transient feedback (popups, toast, danger meter, countdown): new run / back to menu. */
+  reset(): void {
+    this.cancelCountdown();
+    for (const p of this.popups) p.className = 'wr-popup';
+    this.toastEl.classList.remove('wr-show-a', 'wr-show-b');
+    this.setDanger(0);
   }
 
   /** Abort a pending 3-2-1 (the game resumed some other way). */
