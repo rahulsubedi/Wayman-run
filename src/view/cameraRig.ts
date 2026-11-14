@@ -35,6 +35,9 @@ const SWING_X = 2.4;
 /** Run entry swing: max |x| while beside / in front of the hero, and once looking down the street. */
 const ENTRY_X_SIDE = 3.5;
 const ENTRY_X_BEHIND = 1.9;
+/** Ending camera candidates, in order: azimuth (deg from straight behind), side (1 = preferred side). */
+const CRASH_VIEWS: readonly number[] = [62, 1, 35, 1, 62, -1, 0, 1, 90, 1];
+const CAUGHT_VIEWS: readonly number[] = [146, 1, 180, 1, 146, -1, 120, 1, 120, -1];
 /** Camera never goes above this (overhead bunting / gateways hang at y >= 11). */
 const CEILING_Y = 10;
 const BLEND_TIME: Record<CameraMode, number> = { run: 1.1, menu: 0.9, over: 0.55 };
@@ -247,7 +250,7 @@ export class CameraRig {
     const flying = p.action === 'fly';
     let fw = flying ? 1 : 0;
     if (!flying && !p.grounded && this.boost > 0.02 && p.vy < 0) fw = clamp01((p.y - (p.groundY ?? 0)) / 5) * this.boost;
-    this.boost += (fw - this.boost) * damp(flying ? 3.2 : 4, dt);
+    this.boost += (fw - this.boost) * damp(flying ? 5 : 4, dt);
     this.fovKick *= Math.exp(-dt * 3);
     if (flying && !this.wasFlying && dt > 0) this.kick(4); // take-off punch
     this.wasFlying = flying;
@@ -260,7 +263,7 @@ export class CameraRig {
     let rate = 4;
     if (flying) {
       target = p.y;
-      rate = 6;
+      rate = 14;
     } else if (this.boost > 0.05 && !p.grounded) {
       target = p.y; // boost descent
       rate = 7;
@@ -413,7 +416,7 @@ export class CameraRig {
   }
 
   private lookFollowX(px: number, fly: number): number {
-    return px * lerp(lerp(0.55, 0.3, this.portrait()), 0.3, fly);
+    return px * lerp(lerp(0.55, 0.3, this.portrait()), 0.5, fly);
   }
 
   private runPose(p: PlayerState, hz: number, o: Pose): void {
@@ -421,9 +424,9 @@ export class CameraRig {
     const uw = this.ultrawide();
     const fw = this.boost;
     const aspect = this.stage.aspect;
-    let fov = lerp(56, 66, pt) + this.speedN * 7 + fw * 2 + this.fovKick;
-    let back = lerp(lerp(6.4, 8.2, pt), 7.6 + pt * 1.6, fw) - uw * 0.5;
-    const height = lerp(lerp(3.4, 4.3, pt), 2.6 + pt * 0.6, fw) - uw * 0.35;
+    let fov = lerp(56, 66, pt) + this.speedN * 7 - fw * 2 + this.fovKick;
+    let back = lerp(lerp(6.4, 8.2, pt), 6.9 + pt * 1.6, fw) - uw * 0.5;
+    const height = lerp(lerp(3.4, 4.3, pt), 2.1 + pt * 0.2, fw) - uw * 0.35;
 
     // Aspect-aware: widen FOV (up to a cap), then pull back, until the lanes fit at the hero.
     const dist = Math.hypot(back, height - 1);
@@ -446,7 +449,7 @@ export class CameraRig {
     o.pz = hz + back;
     o.lx = this.lookX;
     // Look target: down the street; keeps a jumping / rising hero in frame; looks down in flight.
-    o.ly = sup + lerp(1.15, 2.0, pt) + Math.max(0, p.y - sup) * lerp(0.3, 0.75, fw) - fw * lerp(2.9, 2.3, pt) - uw * 0.15;
+    o.ly = sup + lerp(1.15, 2.0, pt) + Math.max(0, p.y - sup) * (this.wasFlying ? 1 : lerp(0.3, 0.75, fw)) - fw * lerp(2.9, 2.3, pt) - uw * 0.15;
     o.lz = hz - lerp(10, 15, pt) - fw * 2;
     o.fov = fov;
     o.roll = this.roll;
@@ -474,7 +477,7 @@ export class CameraRig {
     // desktop (in front of the lit facades, the sunny street and sky receding behind him), between the wordmark (left) and Play (right) on short landscape phones, centred
     // between the stacked wordmark and Play on portrait.
     const u = sl ? 0.14 : lerp(0.42, 0, pt);
-    const v = sl ? -0.3 : lerp(-0.16, -0.02, pt);
+    const v = sl ? -0.4 : lerp(-0.16, -0.02, pt);
     this.aim(o, p.x, p.y + 1.05, hz, u, v);
   }
 
@@ -501,7 +504,7 @@ export class CameraRig {
     // landscape screens, above it on portrait phones.
     const slide = smooth01((this.overTime - 0.35) / 0.65);
     const u = slide * lerp(caught ? -0.44 : -0.36, 0, pt);
-    const v = slide * lerp(0, 0.34, pt);
+    const v = slide * lerp(0, 0.58, pt);
     this.aim(o, p.x + (caught ? spot.side * 0.2 : 0), p.y + (caught ? 0.9 : 0.4), hz + (caught ? 1.2 : 1.1), u, v);
   }
 
@@ -515,22 +518,25 @@ export class CameraRig {
     // Prefer the side toward the road centre (more room), else the side with fewer solids nearby.
     let pref: 1 | -1 = p.x > 0.5 ? -1 : p.x < -0.5 ? 1 : this.sideLoad(p, hz, 1) <= this.sideLoad(p, hz, -1) ? 1 : -1;
     if (caught && Math.abs(p.x) <= 0.5 && this.sideLoad(p, hz, 1) === this.sideLoad(p, hz, -1)) pref = 1;
-    const azs = caught ? [146, 146, 180, 120, 120] : [62, 62, 35, 0, 90];
-    const sides = caught ? [pref, -pref, pref, pref, -pref] : [pref, -pref, pref, pref, -pref];
+    const views = caught ? CAUGHT_VIEWS : CRASH_VIEWS;
     const r = caught ? 4.7 : 5.0;
     const h0 = caught ? 4.0 : 3.5;
-    for (let hi = 0; hi < 4; hi++) {
-      const h = h0 + hi * 1.5;
-      for (let i = 0; i < azs.length; i++) {
-        const side = sides[i] as 1 | -1;
-        const az = azs[i] * D2R * side;
-        if (this.spotClear(p, hz, az, r, h, caught)) {
-          spot.az = az; spot.r = r; spot.h = h; spot.side = side; spot.chosen = true;
-          return;
+    // Each view first tries going higher (up to +3 m) before the next view is considered; then
+    // every view once more from high up.
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < views.length; i += 2) {
+        const side = (views[i + 1] * pref) as 1 | -1;
+        const az = views[i] * D2R * side;
+        for (let hi = pass === 0 ? 0 : 3; hi < (pass === 0 ? 3 : 5); hi++) {
+          const h = h0 + hi * 1.5;
+          if (this.spotClear(p, hz, az, r, h, caught)) {
+            spot.az = az; spot.r = r; spot.h = h; spot.side = side; spot.chosen = true;
+            return;
+          }
         }
       }
     }
-    spot.az = azs[0] * D2R * pref; spot.r = r * 0.8; spot.h = h0 + 5; spot.side = pref; spot.chosen = true;
+    spot.az = views[0] * D2R * pref; spot.r = r * 0.8; spot.h = h0 + 5; spot.side = pref; spot.chosen = true;
   }
 
   /** Number of solids beside the hero on `side` (within a few metres). */
@@ -559,9 +565,9 @@ export class CameraRig {
     if (cy > CEILING_Y) return false;
     // Hero standing (impact), hero lying (+z), drone above him when caught.
     return (
-      this.segmentClear(cx, cy, cz, p.x, p.y + 1.0, hz, 0.7) &&
-      this.segmentClear(cx, cy, cz, p.x, p.y + 0.3, hz + 1.0, 0.7) &&
-      (!caught || this.segmentClear(cx, cy, cz, p.x, p.y + 2.2, hz + 1.2, 0.7))
+      this.segmentClear(cx, cy, cz, p.x, p.y + 1.0, hz, 1.1) &&
+      this.segmentClear(cx, cy, cz, p.x, p.y + 0.3, hz + 1.0, 1.1) &&
+      (!caught || this.segmentClear(cx, cy, cz, p.x, p.y + 2.2, hz + 1.7, 1.1))
     );
   }
 

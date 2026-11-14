@@ -72,6 +72,8 @@ const DRONE_BODY_BOTTOM = 1.7;
 const DRONE_CATCH_GAP = 1.7;
 /** Node height below a roof top that puts the drone's underside ~0.5 m above that roof. */
 const DRONE_ROOF_BASE = DRONE_BODY_BOTTOM - 0.5;
+/** Extra node height when the drone is close in front of the chase camera. */
+const DRONE_NEAR_LIFT = 0.75;
 
 const SFX: Partial<Record<SimEvent['type'], SfxName>> = {
   coin: 'coin',
@@ -536,22 +538,36 @@ export class Game {
     const flying = p.action === 'fly' || (this.droneFly > 0.05 && !p.grounded && !over);
     this.droneFly += ((flying ? 1 : 0) - this.droneFly) * (1 - Math.exp(-dt * (flying ? 2.5 : 1.5)));
     const cs = this.chaserView;
-    cs.gap = this.viewGap + this.droneFly * 14;
+    const cam = this.stage.camera;
+    const heroZ = this.stage.worldZ(p.s);
+    // View distance: the sim's gap, but while it hangs around just behind the hero (intro, stumble
+    // window) it is held a few metres in front of the chase camera, so it is seen whole from a
+    // little above and behind instead of cropped and edge-on at the lens; once the sim lets it
+    // fall back further it passes the camera quickly and leaves the shot.
+    let gv = this.viewGap;
+    if (!over) {
+      const camBack = cam.position.z - heroZ;
+      const hold = clamp(camBack - 3.4, 2.4, 3.4);
+      if (gv > hold) gv = gv < 7 ? hold + (gv - hold) * 0.12 : hold + (7 - hold) * 0.12 + (gv - 7) * 1.8;
+    }
+    cs.gap = gv + this.droneFly * 14;
     cs.visible = this._mode !== 'menu' && st.chaser.visible;
 
     const ds = p.s - cs.gap;
-    // Close to the chase camera the drone must stay inside the frame: tuck it in and lift it a
-    // little (not for the endings, where the camera stands elsewhere).
-    const camDist = over ? 99 : Math.max(0, this.stage.camera.position.z - this.stage.worldZ(ds));
-    const near = clamp((5.5 - camDist) / 2.5, 0, 1);
+    const dz = this.stage.worldZ(ds);
+    // Distance in front of the chase camera (not for the endings: that camera stands elsewhere).
+    const camDist = over ? 99 : Math.max(0, cam.position.z - dz);
+    const near = clamp((6 - camDist) / 3, 0, 1);
 
-    // Vertical base: standing surface, plus a fraction of the jump; stays low in boost flight.
+    // Vertical base: standing surface plus a fraction of the jump; near the camera it flies a
+    // little higher (body still below the lens, so its top deck shows, and above the hero's head
+    // on screen, so it never hides him). Stays low in boost flight.
     const ground = p.groundY ?? 0;
-    let baseGoal = ground + Math.max(0, p.y - ground) * 0.3 * (1 - this.droneFly) + near * 0.8;
+    let baseGoal = ground + Math.max(0, p.y - ground) * 0.3 * (1 - this.droneFly) + near * DRONE_NEAR_LIFT;
 
     // Lateral: pick the side with free space (no solid at the drone's height there).
     const catchK = caught ? clamp((this.viewGap - DRONE_CATCH_GAP) / 2, 0, 1) : 1;
-    const baseOffset = DRONE_SIDE_OFFSET - 0.7 * near;
+    const baseOffset = DRONE_SIDE_OFFSET;
     const offset = caught ? 0.35 + (baseOffset - 0.35) * catchK : baseOffset;
     if (!this.droneInit) this.droneSide = p.x < -0.4 ? 1 : -1;
     // Caught: beside the hero on the ending camera's side, so his body does not hide it.
@@ -570,7 +586,14 @@ export class Game {
     }
     if (raise) baseGoal = Math.max(baseGoal, this.solidTop(p.x, ds) - DRONE_ROOF_BASE);
     if (caught) baseGoal = ground - 0.45 + 0.8 * catchK; // pounce: down over the hero, just behind his head
-    const goalX = this.sideX(this.droneSide, p.x, offset);
+    let goalX = this.sideX(this.droneSide, p.x, offset);
+    if (!over && camDist < 20) {
+      // Keep it inside the frame's width at its depth (at the edge rather than over the road on
+      // narrow portrait screens).
+      const halfW = camDist * Math.tan((cam.fov * Math.PI) / 360) * this.stage.aspect;
+      const lim = Math.max(0.6, halfW - 0.9 * Math.min(1, camDist / 4));
+      goalX = clamp(goalX, cam.position.x - lim, cam.position.x + lim);
+    }
     if (!this.droneInit) {
       this.droneX = goalX;
       this.droneBase = baseGoal;
@@ -582,9 +605,9 @@ export class Game {
     const up = baseGoal > this.droneBase;
     this.droneBase += (baseGoal - this.droneBase) * (1 - Math.exp(-dt * (up ? (raise ? 7 : 3.5) : caught ? 6 : 3)));
 
-    node.position.set(this.droneX, this.droneBase, this.stage.worldZ(ds));
-    // Seen from very close (intro, stumble) it would fill the screen: shrink it a little.
-    const k = 0.55 + 0.45 * clamp((camDist - 2.2) / 3.3, 0, 1);
+    node.position.set(this.droneX, this.droneBase, dz);
+    // Seen from close it would fill the screen: shrink it a little.
+    const k = 0.72 + 0.28 * clamp((camDist - 2.5) / 3, 0, 1);
     node.scale.set(k, k, k);
     this.chaser.update(cs, this.viewTime, dt);
     // Searchlight follows the hero's chest, on roofs and in flight too.
