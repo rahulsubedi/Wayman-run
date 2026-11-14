@@ -176,7 +176,9 @@ export const VARIANTS = { ground: 3, backTown: 2, backNight: 2, backHarbor: 2, f
  * Every fourth chunk keeps the wide deck with fish-market sheds, so the open stretches run 150 m.
  */
 export function openQuay(index: number, zone: number): boolean {
-  return zone === 1 && ((index % 4) + 4) % 4 !== 2;
+  const i4 = ((index % 4) + 4) % 4, i10 = ((index % 10) + 10) % 10;
+  // The last harbour chunk keeps its sheds: it screens the next zone's rear blocks from the quay.
+  return zone === 1 && i4 !== 2 && i10 !== 9;
 }
 
 export function chunkZone(index: number, offset: number, zoneLen: number, zoneCount: number): number {

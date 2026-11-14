@@ -19,7 +19,7 @@ export interface ModuleDef {
   material: 'main' | 'water';
 }
 
-const MEDIUM = new Set(['cafe', 'cafeNight', 'stall', 'stallNight', 'foodStall', 'crates', 'palm']);
+const MEDIUM = new Set(['cafe', 'cafeNight', 'stall', 'stallNight', 'foodStall', 'crates', 'palm', 'boat0', 'boat1', 'boat2']);
 const SMALL = new Set(['bin', 'hydrant', 'bollards', 'scooter', 'bicycle', 'signpost', 'pots', 'bench', 'laundry', 'hedge', 'planter', 'barrels', 'nets']);
 
 export function moduleDefs(): Map<string, ModuleDef> {
