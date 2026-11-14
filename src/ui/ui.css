@@ -301,15 +301,15 @@
   font-size: 1.55em;
   font-weight: 900;
   color: #fff;
-  background: linear-gradient(180deg, #ffb14a, #f26a0a);
+  background: linear-gradient(180deg, #cf8bff, #8f3fe0);
   box-shadow: 0 0 0 0.1em var(--navy), 0 0.12em 0.3em rgba(0, 0, 0, 0.4);
-  text-shadow: 0 0.06em 0 rgba(110, 36, 0, 0.6);
+  text-shadow: 0 0.06em 0 rgba(50, 10, 90, 0.6);
   opacity: 0;
   transform: scale(0.4) rotate(-14deg);
   transition: opacity 0.15s, transform 0.3s cubic-bezier(0.2, 1.8, 0.4, 1);
 }
 .wr-mult.wr-on { opacity: 1; transform: scale(1) rotate(-8deg); animation: wr-glow 1.2s ease-in-out infinite; }
-@keyframes wr-glow { 50% { box-shadow: 0 0 0 0.1em var(--navy), 0 0 0.9em 0.2em rgba(255, 170, 60, 0.85); } }
+@keyframes wr-glow { 50% { box-shadow: 0 0 0 0.1em var(--navy), 0 0 0.9em 0.2em rgba(190, 110, 255, 0.85); } }
 
 .wr-pausebtn { margin-top: 0.1em; }
 
@@ -329,8 +329,9 @@
 .wr-chip-bar { width: 5em; height: 0.7em; border-radius: 999px; background: rgba(255, 255, 255, 0.2); overflow: hidden; }
 .wr-chip-bar i { display: block; height: 100%; width: 100%; transform-origin: left center; border-radius: 999px; transition: transform 0.14s linear; }
 .wr-chip-magnet .wr-chip-bar i { background: linear-gradient(90deg, #ff7b6e, #ff4d4d); }
-.wr-chip-boost .wr-chip-bar i { background: linear-gradient(90deg, #ffd23f, #ff9a2e); }
-.wr-chip-mult .wr-chip-bar i { background: linear-gradient(90deg, #ffb14a, #f26a0a); }
+.wr-chip-boost .wr-chip-bar i { background: linear-gradient(90deg, #ffb14a, #ff8a1f); }
+.wr-chip-mult .wr-chip-bar i { background: linear-gradient(90deg, #cf8bff, #b35cff); }
+.wr-chip-shield .wr-chip-ready { color: #9cc8ff; }
 .wr-chip-ready { font-size: 0.8em; letter-spacing: 0.14em; color: var(--teal-l); }
 .wr-chip-shield.wr-on .wr-ico-wrap { animation: wr-float 1.4s ease-in-out infinite; }
 .wr-chip.wr-low { animation: wr-blink 0.5s steps(2, jump-none) infinite; }
