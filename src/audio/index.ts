@@ -2,11 +2,13 @@
 // Safe to construct and call before unlock() (everything is a no-op until a user gesture creates
 // the context), and safe on browsers without WebAudio.
 import { buildChain, MASTER_LEVEL, MUSIC_LEVEL, type AudioChain } from './chain';
+import { startBoostLoop, type LoopHandle, type LoopName } from './loops';
 import { playStep, stepDuration, type MusicStyle } from './music';
 import { playSfx, SFX_LIMITS, SFX_NAMES, type SfxName } from './synth';
 
 export type { SfxName } from './synth';
 export type MusicMode = 'menu' | 'run' | 'off';
+export type { LoopName } from './loops';
 
 const LOOKAHEAD = 0.25; // seconds of music scheduled ahead
 const TICK_MS = 40;
@@ -40,6 +42,10 @@ export class AudioEngine {
   private hiddenSuspended = false;
   private musicStarted = false;
 
+  // sustained loops (boost flight)
+  private readonly loopWanted: Record<LoopName, boolean> = { boost: false };
+  private readonly loopActive: Partial<Record<LoopName, LoopHandle>> = {};
+
   constructor() {
     for (const n of SFX_NAMES) this.ends.set(n, new Float64Array(SFX_LIMITS[n].max));
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.onVisibility);
@@ -60,11 +66,15 @@ export class AudioEngine {
         this.chain.master.gain.value = this.muted ? 0 : this.chain.master.gain.value;
         this.chain.music.gain.value = 0;
         this.ctx.onstatechange = () => {
-          if (this.ctx?.state === 'running') this.applyMode(true);
+          if (this.ctx?.state === 'running') {
+            this.applyMode(true);
+            this.syncLoops();
+          }
         };
       }
       if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined);
       this.applyMode(false);
+      this.syncLoops();
     } catch {
       this.ctx = null;
       this.chain = null;
@@ -108,15 +118,25 @@ export class AudioEngine {
     this.voiceHead = (h + 1) % VOICE_RING;
   }
 
-  setMusic(mode: MusicMode): void {
+  /** Start or stop a sustained sound (e.g. the boost flight roar). Safe before unlock(). */
+  setLoop(name: LoopName, on: boolean): void {
+    this.loopWanted[name] = on;
+    this.syncLoops();
+  }
+
+  /**
+   * Switch the music. `keepPosition` continues the run track where it left off when returning to
+   * 'run' (pause / resume) instead of restarting it.
+   */
+  setMusic(mode: MusicMode, keepPosition = false): void {
     if (mode === this.mode) return;
     const prev = this.mode;
     this.mode = mode;
     if (mode !== 'off') {
       const style: MusicStyle = mode;
       // Returning from silence (pause/resume) continues where we were; a style change restarts.
-      if (prev !== 'off' && style !== this.style) this.steps[style] = 0;
-      if (prev === 'menu' && mode === 'run') this.steps.run = 0;
+      if (prev !== 'off' && style !== this.style && !keepPosition) this.steps[style] = 0;
+      if (prev === 'menu' && mode === 'run' && !keepPosition) this.steps.run = 0;
       this.style = style;
       this.musicStarted = false;
     }
@@ -139,6 +159,8 @@ export class AudioEngine {
   }
 
   dispose(): void {
+    this.loopWanted.boost = false;
+    this.syncLoops();
     this.stopTimer();
     if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.onVisibility);
     void this.ctx?.close().catch(() => undefined);
@@ -147,6 +169,22 @@ export class AudioEngine {
   }
 
   // ----------------------------------------------------------------- internals
+
+  /** Make the running loops match what was asked for (muted => silent via master, but kept alive). */
+  private syncLoops(): void {
+    const ctx = this.ctx;
+    const chain = this.chain;
+    if (!ctx || !chain) return;
+    for (const name of Object.keys(this.loopWanted) as LoopName[]) {
+      const want = this.loopWanted[name];
+      const cur = this.loopActive[name];
+      if (want && !cur && ctx.state === 'running') this.loopActive[name] = startBoostLoop(ctx, chain.sfx);
+      else if (!want && cur) {
+        cur.stop(ctx);
+        delete this.loopActive[name];
+      }
+    }
+  }
 
   private activeNodes(now: number): number {
     let n = 0;

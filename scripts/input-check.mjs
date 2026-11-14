@@ -105,7 +105,7 @@ const fresher = async (page) => {
   check('P -> pause', await until(page, () => window.__wayman.game.mode === 'paused', null, 2000));
   check('pause screen visible', await page.evaluate(() => document.querySelector('#ui').dataset.screen === 'pause'));
   await page.keyboard.press('Escape');
-  check('Esc -> resume', await until(page, () => window.__wayman.game.mode === 'running', null, 2000));
+  check('Esc -> resume', await until(page, () => window.__wayman.game.mode === 'running', null, 8000));
   await ctx.close();
 }
 
@@ -188,10 +188,13 @@ const fresher = async (page) => {
   await page.evaluate(() => { const g = window.__wayman.game; g.pause(); g.home(); });
   await page.keyboard.press('Space');
   check('Space on menu -> Play', await until(page, () => window.__wayman.game.mode === 'running', null, 2000));
-  await page.evaluate(() => { const g = window.__wayman.game; g.ui.showGameOver({ score: 10, coins: 1, best: 10, newBest: false, reason: 'crash' }); });
-  await page.keyboard.press('Space');
-  await page.waitForTimeout(200);
-  check('Space right after game over is ignored (anti mis-tap lock)', await page.evaluate(() => document.querySelector('#ui').dataset.screen === 'gameover'));
+  // Same evaluate (no frame in between): slow software frames must not eat the 650 ms lock.
+  check('Space right after game over is ignored (anti mis-tap lock)', await page.evaluate(() => {
+    const g = window.__wayman.game;
+    g.ui.showGameOver({ score: 10, coins: 1, best: 10, newBest: false, reason: 'crash' });
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', bubbles: true }));
+    return document.querySelector('#ui').dataset.screen === 'gameover';
+  }));
   await page.waitForTimeout(700);
   await page.keyboard.press('Space');
   check('Space on game over (after lock) -> Play again', await page.evaluate(() => document.querySelector('#ui').dataset.screen === 'hud'));

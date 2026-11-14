@@ -52,10 +52,11 @@ const P = {
   COUNT: 34,
 } as const;
 
-const ACTIONS: readonly PlayerAction[] = ['run', 'jump', 'fall', 'roll', 'fly', 'stumble', 'dead'];
+const ACTIONS: readonly (PlayerAction | 'idle')[] = ['run', 'jump', 'fall', 'roll', 'fly', 'stumble', 'dead', 'idle'];
 const A_INDEX: Record<PlayerAction, number> = { run: 0, jump: 1, fall: 2, roll: 3, fly: 4, stumble: 5, dead: 6 };
+const IDLE_INDEX = 7;
 /** Blend-in rate per action (1/s): fast for snappy actions, slower for flight/death. */
-const BLEND_RATE = [12, 22, 9, 24, 7, 18, 14];
+const BLEND_RATE = [12, 22, 9, 24, 7, 18, 14, 7];
 
 const TAU = Math.PI * 2;
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
@@ -115,6 +116,8 @@ export class HeroRig {
   private scarfSide = 0;
   private satchelAng = 0;
   private initialised = false;
+  private idleMode = false;
+  private dive = 0;
 
   constructor() {
     const g = heroGeometry();
@@ -186,13 +189,36 @@ export class HeroRig {
     this.shield.visible = this.magnetA.visible = this.magnetB.visible = this.flame.visible = this.nozzle.visible = this.sparkles.visible = false;
   }
 
+  /** Menu mode: a ready/idle stance instead of the run cycle. Blends in and out. */
+  setIdle(on: boolean): void {
+    this.idleMode = on;
+  }
+
+  /** Forget all pose, spring and power-up state (new run / back to the menu). */
+  reset(): void {
+    this.initialised = false;
+    this.weights.fill(0);
+    this.squash = this.squashV = 0;
+    this.tumbleAngle = 0;
+    this.satchelAng = 0;
+    this.scarfAng.fill(0);
+    this.scarfSide = 0;
+    this.dive = 0;
+    this.fxShield = this.fxMagnet = this.fxBoost = this.fxMult = 0;
+    this.prevAction = 'run';
+    this.prevVy = 0;
+    this.node.visible = true;
+    this.shield.visible = this.magnetA.visible = this.magnetB.visible = this.flame.visible = this.nozzle.visible = this.sparkles.visible = false;
+  }
+
   update(p: PlayerState, powerups: SimState['powerups'], dt: number): void {
     if (!(dt >= 0)) dt = 0;
     dt = Math.min(dt, 0.1);
     this.node.position.x = p.x;
     this.node.position.y = p.y;
 
-    const ai = A_INDEX[p.action] ?? 0;
+    const ai = this.idleMode ? IDLE_INDEX : (A_INDEX[p.action] ?? 0);
+    this.dive += ((p.fastFall && p.action === 'fall' ? 1 : 0) - this.dive) * approach(18, dt);
     if (!this.initialised) {
       this.weights[ai] = 1;
       this.prevAction = p.action;
@@ -258,6 +284,7 @@ export class HeroRig {
       case 4: return this.poseFly(p, o);
       case 5: return this.poseStumble(p, o);
       case 6: return this.poseDead(p, o);
+      case 7: return this.poseIdle(o);
     }
   }
 
@@ -357,7 +384,7 @@ export class HeroRig {
   private poseFall(p: PlayerState, o: Float64Array): void {
     this.base(o);
     const t = p.actionTime;
-    const fast = clamp((-p.vy - 14) / 10, 0, 1); // fast-fall (roll pressed in the air)
+    const fast = Math.max(clamp((-p.vy - 14) / 10, 0, 1), this.dive); // fast-fall (roll pressed in the air)
     const reach = smooth(t / 0.25);
     const wob = Math.sin(this.clock * 7) * 0.08;
     // Legs extend to reach for the ground, slightly staggered.
@@ -377,9 +404,14 @@ export class HeroRig {
     o[P.spinePitch] = -0.05 - 0.4 * fast;
     o[P.pelvisPitch] = 0.04;
     o[P.headPitch] = 0.05 + 0.3 * fast;
-    o[P.stretch] = 1.03 + 0.05 * fast;
-    o[P.satchel] = -0.25;
-    o[P.wind] = 0.7 + 0.3 * fast;
+    o[P.stretch] = 1.03 + 0.05 * fast + 0.07 * this.dive;
+    // Dive: pitched forward, head tucked between the arms, legs trailing.
+    o[P.bodyPitch] = -0.28 * this.dive;
+    o[P.pelvisPitch] += -0.25 * this.dive;
+    o[P.shLx] += 1.2 * this.dive;
+    o[P.shRx] += 1.2 * this.dive;
+    o[P.satchel] = -0.25 - 0.3 * this.dive;
+    o[P.wind] = 0.7 + 0.3 * fast + 0.5 * this.dive;
   }
 
   private poseRoll(_p: PlayerState, o: Float64Array): void {
@@ -460,6 +492,48 @@ export class HeroRig {
     o[P.kneeR] += -0.3 * e;
     o[P.hipLz] += -0.1 * e;
     o[P.hipRz] += 0.1 * e;
+  }
+
+  /** Menu "ready" stance: breathing, weight shift, glances at the camera, now and then a wave. */
+  private poseIdle(o: Float64Array): void {
+    this.base(o);
+    const t = this.clock;
+    const breath = Math.sin(t * 2.1);
+    const shift = Math.sin(t * 0.9);
+    // Hop on the toes every ~3.2 s (a little "ready to go" bounce).
+    const hopPh = (t % 3.2) / 3.2;
+    const hop = hopPh < 0.2 ? Math.sin((hopPh / 0.2) * Math.PI) : 0;
+    o[P.bodyY] = 0.012 * breath + 0.1 * hop;
+    o[P.stretch] = 1 + 0.012 * breath + 0.03 * hop;
+    o[P.pelvisRoll] = 0.05 * shift;
+    o[P.spineRoll] = -0.04 * shift;
+    o[P.pelvisPitch] = -0.1;
+    o[P.spinePitch] = -0.12 + 0.015 * breath;
+    // Look around: toward the camera, down the street, back.
+    o[P.headYaw] = 0.5 * Math.sin(t * 0.55) + 0.12 * Math.sin(t * 1.7);
+    o[P.headPitch] = 0.1 + 0.06 * Math.sin(t * 0.8 + 1) - 0.04 * hop;
+    o[P.headRoll] = 0.06 * Math.sin(t * 0.55);
+    // Knees soft, feet apart, a slow weight shift.
+    o[P.hipLx] = 0.14 + 0.05 * shift + 0.35 * hop;
+    o[P.hipRx] = 0.06 - 0.05 * shift + 0.35 * hop;
+    o[P.kneeL] = -0.3 - 0.06 * shift - 0.5 * hop;
+    o[P.kneeR] = -0.22 + 0.06 * shift - 0.5 * hop;
+    o[P.ankleL] = 0.1 + 0.2 * hop;
+    o[P.ankleR] = 0.1 + 0.2 * hop;
+    o[P.hipLz] = -0.07;
+    o[P.hipRz] = 0.07;
+    // Left hand on the satchel strap, right arm swings loosely and waves every ~7 s.
+    o[P.shLx] = 0.5;
+    o[P.shLz] = -0.1;
+    o[P.elbowL] = 1.7;
+    const wavePh = ((t + 2.5) % 7) / 7;
+    const wave = smooth(wavePh / 0.06) * (1 - smooth((wavePh - 0.2) / 0.06));
+    o[P.shRx] = 0.1 + 0.04 * breath + (-0.3) * wave;
+    o[P.shRz] = 0.14 + 2.2 * wave;
+    o[P.shRy] = 0;
+    o[P.elbowR] = 0.35 + 0.15 * breath + wave * (0.5 + 0.55 * Math.sin(t * 11));
+    o[P.satchel] = 0.04 * breath + 0.08 * hop;
+    o[P.wind] = 0.12;
   }
 
   private poseDead(p: PlayerState, o: Float64Array): void {

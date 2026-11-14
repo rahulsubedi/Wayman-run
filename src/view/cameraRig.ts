@@ -20,6 +20,13 @@ export type CameraMode = 'menu' | 'run' | 'over';
 const FRAME_HALF_WIDTH = LANE_WIDTH + 1.45;
 const BLEND_TIME: Record<CameraMode, number> = { run: 1.1, menu: 0.9, over: 0.5 };
 
+const smooth01 = (v: number) => {
+  const x = v < 0 ? 0 : v > 1 ? 1 : v;
+  return x * x * (3 - 2 * x);
+};
+function shortLandscapeOver(stage: Stage): boolean {
+  return stage.aspect >= 1 && typeof window !== 'undefined' && window.innerHeight <= 520;
+}
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const damp = (rate: number, dt: number) => 1 - Math.exp(-rate * dt);
@@ -76,6 +83,11 @@ export class CameraRig {
   private lastS = 0;
   private idle = 0;
   private wasFlying = false;
+  /** Hero position (world x, z) at the last update, and at the moment the last mode change began. */
+  private heroX = 0;
+  private heroZ = 0;
+  private fromHeroX = 0;
+  private fromHeroZ = 0;
 
   private readonly look = { x: 0, y: 0, z: 0 };
   private readonly up = { x: 0, y: 1, z: 0 };
@@ -85,6 +97,7 @@ export class CameraRig {
     stage.onRebase((dz) => {
       this.from.pz += dz; this.from.lz += dz;
       this.out.pz += dz; this.out.lz += dz;
+      this.heroZ += dz; this.fromHeroZ += dz;
     });
   }
 
@@ -134,6 +147,8 @@ export class CameraRig {
     stage.focus.x = p.x;
     stage.focus.y = p.y;
     stage.focus.z = hz;
+    this.heroX = p.x;
+    this.heroZ = hz;
 
     if (this.autoMode) this.inferMode(p, dt);
     else if (p.action === 'dead' && this._mode === 'run') this.enterMode('over');
@@ -174,9 +189,29 @@ export class CameraRig {
       this.blendT += dt;
       const k = clamp01(this.blendT / this.blendDur);
       const e = this._mode === 'over' ? 1 - Math.pow(1 - k, 3) : k * k * (3 - 2 * k);
+      // The pose we blend from is kept relative to the hero, so it travels with him (a swoop from the
+      // menu framing into the chase view while he is already running).
       const a = this.from, b = this.want, o = this.out;
-      o.px = lerp(a.px, b.px, e); o.py = lerp(a.py, b.py, e); o.pz = lerp(a.pz, b.pz, e);
-      o.lx = lerp(a.lx, b.lx, e); o.ly = lerp(a.ly, b.ly, e); o.lz = lerp(a.lz, b.lz, e);
+      const mx = this.heroX - this.fromHeroX, mz = this.heroZ - this.fromHeroZ;
+      // Camera position: orbit around the hero (angle + radius) instead of cutting straight through
+      // him when the framings are on opposite sides (menu front view -> chase view from behind).
+      const fx = a.px - this.fromHeroX, fz = a.pz - this.fromHeroZ;
+      const tx = b.px - this.heroX, tz = b.pz - this.heroZ;
+      const fr = Math.hypot(fx, fz), tr = Math.hypot(tx, tz);
+      if (fr > 0.5 && tr > 0.5) {
+        const fa = Math.atan2(fx, fz);
+        let da = Math.atan2(tx, tz) - fa;
+        da -= Math.PI * 2 * Math.floor((da + Math.PI) / (Math.PI * 2));
+        const ang = fa + da * e;
+        const r = lerp(fr, tr, e);
+        o.px = this.heroX + Math.sin(ang) * r;
+        o.pz = this.heroZ + Math.cos(ang) * r;
+      } else {
+        o.px = lerp(a.px + mx, b.px, e);
+        o.pz = lerp(a.pz + mz, b.pz, e);
+      }
+      o.py = lerp(a.py, b.py, e);
+      o.lx = lerp(a.lx + mx, b.lx, e); o.ly = lerp(a.ly, b.ly, e); o.lz = lerp(a.lz + mz, b.lz, e);
       o.fov = lerp(a.fov, b.fov, e); o.roll = lerp(a.roll, b.roll, e);
       pose = o;
     }
@@ -223,8 +258,8 @@ export class CameraRig {
     const pt = this.portrait();
     const aspect = this.stage.aspect;
     let fov = lerp(56, 66, pt) + this.speedN * 7 + this.boost * 6 + this.fovKick;
-    let back = lerp(6.4, 8.2, pt) + this.boost * 3.2;
-    const height = lerp(3.4, 4.3, pt) + this.boost * 1.4;
+    let back = lerp(6.4, 8.2, pt) + this.boost * 1.5;
+    const height = lerp(3.4, 4.3, pt) + this.boost * 0.8;
 
     // Aspect-aware: widen FOV (up to a cap), then pull back, until the lanes fit at the hero.
     const dist = Math.hypot(back, height - 1);
@@ -258,9 +293,12 @@ export class CameraRig {
     // Aim past the hero and off to the side, so he stands low and right of centre on landscape
     // (clear of the title / play button) and low and centred on portrait.
     const fx = -Math.sin(th), fz = -Math.cos(th); // camera -> hero, horizontal
-    const off = lerp(1.5, 0, pt);
+    // The DOM menu is a centred column on normal landscape screens (hero pushed well to the right,
+    // clear of the Play button) and a left/right split on short landscape phones (hero between).
+    const shortLandscape = this.stage.aspect >= 1 && typeof window !== 'undefined' && window.innerHeight <= 520;
+    const off = lerp(shortLandscape ? 1.5 : 3.1, 0, pt);
     o.lx = p.x + fx * 2 - Math.cos(th) * off;
-    o.ly = p.y + lerp(1.45, 3.3, pt);
+    o.ly = p.y + lerp(shortLandscape ? 1.9 : 1.45, 2.4, pt);
     o.lz = hz + fz * 2 + Math.sin(th) * off;
     o.fov = lerp(48, 60, pt);
     o.roll = 0;
@@ -271,12 +309,16 @@ export class CameraRig {
     const pt = this.portrait();
     // A short push-in from the run framing (higher and closer), then a slow sideways drift.
     const drift = Math.min(this.overTime, 6) * 0.06;
+    // Frame the spot where the hero ends up (he falls back toward the camera). Once the game-over
+    // panel arrives the hero slides out from behind it: left of the panel on landscape screens,
+    // above it on portrait phones.
+    const slide = smooth01((this.overTime - 0.3) / 0.6);
     o.px = p.x * 0.6 + 0.6 + drift;
-    o.py = p.y + lerp(3.1, 3.9, pt);
-    o.pz = hz + lerp(5.0, 6.6, pt);
-    o.lx = p.x;
-    o.ly = p.y + 0.7;
-    o.lz = hz - 2;
+    o.py = p.y + lerp(3.2, 3.9, pt);
+    o.pz = hz + lerp(5.6, 6.8, pt);
+    o.lx = p.x + slide * lerp(shortLandscapeOver(this.stage) ? 1.9 : 2.3, 0, pt);
+    o.ly = p.y - 0.2 + slide * pt * 1.6;
+    o.lz = hz + 1.0;
     o.fov = lerp(50, 64, pt);
     o.roll = -1.5 * D2R;
   }
@@ -289,6 +331,7 @@ export class CameraRig {
     this.from.px = this.out.px; this.from.py = this.out.py; this.from.pz = this.out.pz;
     this.from.lx = this.out.lx; this.from.ly = this.out.ly; this.from.lz = this.out.lz;
     this.from.fov = this.out.fov; this.from.roll = this.out.roll;
+    this.fromHeroX = this.heroX; this.fromHeroZ = this.heroZ;
     this._mode = mode;
     this.blendT = 0;
     this.blendDur = BLEND_TIME[mode];

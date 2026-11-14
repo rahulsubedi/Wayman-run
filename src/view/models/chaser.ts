@@ -193,6 +193,16 @@ export class ChaserRig {
     this.target.z = dz;
   }
 
+  /** Hide the drone and forget motion state (new run / menu). */
+  reset(): void {
+    this.vis = 0;
+    this.lastX = NaN;
+    this.vx = 0;
+    this.bank = 0;
+    this.hasTarget = false;
+    this.node.visible = false;
+  }
+
   update(c: ChaserState, time: number, dt: number): void {
     if (!(dt >= 0)) dt = 0;
     dt = Math.min(dt, 0.1);
