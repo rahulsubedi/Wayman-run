@@ -4,7 +4,7 @@
 // Placements are in chunk-local coordinates: x lateral, y up, u = metres from the chunk start
 // along the run direction (world z = chunkZ - u), rot = rotation about Y (0 for right-side
 // modules, PI for left-side ones, which are authored for the right side).
-import { CHUNK_LEN, FRONT_X, QUAY_EDGE } from './layoutConst';
+import { CHUNK_LEN, FRONT_X, QUAY_EDGE, QUAY_NEAR } from './layoutConst';
 import { STRING_Y } from './overhead';
 
 export interface Place {
@@ -169,12 +169,55 @@ function fill(rnd: R, side: 1 | -1, zone: number, list: readonly (readonly [stri
 }
 
 /** Number of variants of each module family the library must provide. */
-export const VARIANTS = { ground: 3, backTown: 2, backNight: 2, backHarbor: 2, farTown: 2, farNight: 2, farHarbor: 2, farSea: 2, bunting: 2, flags: 2, lanterns: 1 };
+export const VARIANTS = { ground: 3, backTown: 2, backNight: 2, backHarbor: 2, farTown: 2, farNight: 2, farHarbor: 2, farSea: 3, bunting: 2, flags: 2, lanterns: 1 };
+
+/**
+ * Harbour chunks whose sea side is an open quay (narrow deck, water right behind the railing).
+ * Every fourth chunk keeps the wide deck with fish-market sheds, so the open stretches run 150 m.
+ */
+export function openQuay(index: number, zone: number): boolean {
+  return zone === 1 && ((index % 4) + 4) % 4 !== 2;
+}
 
 export function chunkZone(index: number, offset: number, zoneLen: number, zoneCount: number): number {
   // Chunks behind the start line (negative index) belong to the same zone as the first chunk.
   const z = Math.floor((Math.max(0, index) * CHUNK_LEN) / zoneLen) + offset;
   return ((z % zoneCount) + zoneCount) % zoneCount;
+}
+
+/**
+ * Sea side of an open-quay chunk (left side, x < 0): boats moored along the quay wall in one tight
+ * row plus a looser outer row, a few deck props and the odd palm. Boat hulls run along z.
+ */
+function openQuayDressing(rnd: R, index: number, items: Place[], anim: AnimPlace[]): void {
+  const BOAT_LEN: Record<string, number> = { boat0: 7.5, boat1: 9, boat2: 6 };
+  const pickBoat = () => rnd.weighted([['boat0', 3], ['boat1', 2.5], ['boat2', 2]]);
+  // Inner row: hull side ~1 m off the quay wall.
+  let u = 1 + rnd.next() * 3;
+  while (u < CHUNK_LEN - 3) {
+    const key = pickBoat();
+    const len = BOAT_LEN[key];
+    if (u + len > CHUNK_LEN + 2) break;
+    if (rnd.chance(0.82)) anim.push({ key, x: -(QUAY_NEAR + 2.4), y: -1.25, u: u + len / 2, rot: rnd.chance(0.5) ? PI : 0, anim: 'bob', phase: rnd.next() * 6.28 });
+    u += len + 1.2 + rnd.next() * 3;
+  }
+  // Outer row(s): sparser, further out (moored off a pontoon line).
+  for (const [x, p] of [[QUAY_NEAR + 9, 0.55], [QUAY_NEAR + 17, 0.35]] as const) {
+    let v = rnd.next() * 8;
+    while (v < CHUNK_LEN - 4) {
+      const key = pickBoat();
+      if (rnd.chance(p)) anim.push({ key, x: -(x + rnd.next() * 2), y: -1.25, u: v + BOAT_LEN[key] / 2, rot: rnd.chance(0.5) ? PI : 0, anim: 'bob', phase: rnd.next() * 6.28 });
+      v += BOAT_LEN[key] + 3 + rnd.next() * 6;
+    }
+  }
+  // Deck dressing between the sidewalk and the railing (x 8..11.4).
+  let d = 3 + rnd.next() * 6;
+  while (d < CHUNK_LEN - 4) {
+    const key = rnd.weighted([['crates', 2], ['nets', 2.5], ['barrels', 2], ['bench', 2]]);
+    items.push({ key, x: -(key === 'nets' ? 9.2 : 9.5), y: SW_Y, u: d, rot: PI });
+    d += 9 + rnd.next() * 10;
+  }
+  if (index % 2 === 0) items.push({ key: 'palm', x: -10.4, y: SW_Y, u: 12 + rnd.next() * 20, rot: PI });
 }
 
 /**
@@ -192,9 +235,10 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
   // ---- Ground.
   items.push({ key: `ground${rnd.int(VARIANTS.ground)}`, x: 0, y: 0, u: 0, rot: 0 });
   items.push({ key: 'fill:town', x: 0, y: 0, u: 0, rot: 0 });
+  const open = openQuay(index, zone);
   if (harbor) {
-    items.push({ key: 'fill:quay', x: 0, y: 0, u: L, rot: PI });
-    items.push({ key: 'sea', x: 0, y: 0, u: L, rot: PI });
+    items.push({ key: open ? 'fill:quayOpen' : 'fill:quay', x: 0, y: 0, u: L, rot: PI });
+    items.push({ key: open ? 'seaOpen' : 'sea', x: 0, y: 0, u: L, rot: PI });
   } else {
     items.push({ key: 'fill:town', x: 0, y: 0, u: L, rot: PI });
   }
@@ -214,6 +258,10 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
   // ---- Facades.
   for (const side of [1, -1] as const) {
     const quaySide = harbor && side < 0;
+    if (quaySide && open) {
+      openQuayDressing(rnd, index, items, anim);
+      continue;
+    }
     const segs = facadeRow(rnd, widths[zone], quaySide ? [12, 16, 20] : [4], quaySide ? 0.65 : 0.15, quaySide ? low?.[zone] : undefined);
     let u = 0;
     for (const sg of segs) {
@@ -237,7 +285,7 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
   }
 
   // ---- Harbour: more boats moored along the quay behind the low sheds (masts show over roofs).
-  if (harbor) {
+  if (harbor && !open) {
     for (let k = 0; k < 2; k++) {
       const u = 8 + k * 22 + rnd.next() * 10;
       anim.push({ key: rnd.chance(0.6) ? 'boat1' : rnd.pick(['boat0', 'boat0']), x: -(QUAY_EDGE + 2.6), y: -1.25, u, rot: PI, anim: 'bob', phase: rnd.next() * 6.28 });
@@ -249,7 +297,8 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
     const uu = side > 0 ? 0 : L;
     const rot = side > 0 ? 0 : PI;
     if (harbor && side < 0) {
-      items.push({ key: `far:sea:${((index % 3) + 3) % 3 === 0 ? 0 : (rnd.int(2), 1)}`, x: 0, y: 0, u: uu, rot });
+      rnd.int(2); // keep the draw sequence of the original layout
+      items.push({ key: `far:sea:${((index % 3) + 3) % 3}`, x: 0, y: 0, u: uu, rot });
       continue;
     }
     // One merged module per side carries the rear row AND the far hills (one draw, not two).
@@ -257,7 +306,10 @@ export function layoutChunk(index: number, zone: number, widths: WidthTable, low
     const kind = harbor ? 'harbor' : night ? 'night' : 'town';
     const v = rnd.int(2);
     rnd.int(2);
-    items.push({ key: `bg:${kind}:${v}`, x: 0, y: 0, u: uu, rot });
+    // The first 100 m of the night zone are seen across the harbour water from the open quay:
+    // their left side drops the far hills there (rear row only), so no hill slabs hang over the sea.
+    const acrossWater = night && side < 0 && ((index % 10) + 10) % 10 < 2;
+    items.push({ key: `${acrossWater ? 'back' : 'bg'}:${kind}:${v}`, x: 0, y: 0, u: uu, rot });
   }
 
   // ---- Sidewalk rhythm: lamps, trees, masts + strings.

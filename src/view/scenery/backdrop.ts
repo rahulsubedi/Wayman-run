@@ -107,19 +107,54 @@ export function buildFar(kind: 'town' | 'night' | 'harbor' | 'sea', variant: num
   const mb = new MeshBuilder({ seed: 600 + variant + (kind === 'night' ? 50 : kind === 'harbor' ? 70 : kind === 'sea' ? 90 : 0), jitter: 0.06 });
   const rnd = new Rand(610 + variant * 31 + (kind === 'sea' ? 500 : 0));
   if (kind === 'sea') {
-    // Open sea side: a distant island with a lighthouse in variant 0, sailboat silhouettes.
+    // Open sea side, three variants that alternate chunk by chunk: 0 a rocky islet with a
+    // red-and-white lighthouse and keeper's cottage, 1 a cargo ship at anchor, 2 open water with
+    // a few sailboats. All sit 45-90 m out, close enough to read crisply through the haze.
     if (variant === 0) {
-      const x = 130, z = -25;
-      mb.push().translate(x, 2, z).scale(1, 1, 1).sphere(28, 9, 18, 9, 4, { color: 0x7b8a5e, bottom: 0x8a8070, jitter: 0.08 }).pop();
-      mb.push().translate(x - 8, 14, z).cylinder(1.6, 14, 10, { radiusTop: 1.2 }, 0xf4efe6).pop();
-      for (const y of [9, 14, 19]) mb.push().translate(x - 8, y, z).cylinder(1.55, 1.8, 10, { radiusTop: 1.45 }, 0xd9453a).pop();
-      mb.push().translate(x - 8, 22.2, z).cylinder(1.4, 2.4, 8, {}, glowPaint(0xfff2c0, 0.6)).pop();
-      mb.push().translate(x - 8, 24.2, z).cone(1.7, 1.8, 8, 0x2a3a40).pop();
-    }
-    for (let k = 0; k < (variant === 0 ? 2 : 4); k++) {
-      const x = rnd.range(60, 110), z = -rnd.range(5, 45);
-      quadN(mb, [x, -1.2, z], [x, -1.2, z - 4], [x, 7, z - 2], [x, 7, z - 2], [-1, 0, 0], 0xf4efe6);
-      slab(mb, x - 1, -1.3, z - 4.5, x + 1, -0.5, z + 0.5, 0xe9e4d8, ALLS);
+      const x = 52, z = -24;
+      // Rocks: a few squashed boulders.
+      for (const [dx, dz, r, h] of [[0, 0, 9, 3.2], [6, -6, 6, 2.4], [-5, 7, 5, 2], [4, 9, 4, 1.6]] as const) {
+        mb.push().translate(x + dx, -1.4, z + dz).sphere(r, h, r * 0.9, 7, 3, { color: 0x8b8378, top: 0x9c9384, bottom: 0x5d574f, jitter: 0.1 }).pop();
+      }
+      const lx = x - 1, lz = z - 1;
+      mb.push().translate(lx, 1.2, lz).cylinder(2.6, 1.2, 10, {}, grad(0xe8e1d0, 0.8)).pop();
+      mb.push().translate(lx, 9.2, lz).cylinder(1.9, 15, 10, { radiusTop: 1.35 }, grad(0xf6f1e7, 0.9)).pop();
+      for (const y of [5.2, 10.4, 15.2]) mb.push().translate(lx, y, lz).cylinder(1.8 - (y - 5) * 0.035, 2.2, 10, { radiusTop: 1.72 - (y - 5) * 0.035 }, 0xd9453a).pop();
+      mb.push().translate(lx, 17.1, lz).cylinder(2.0, 0.35, 10, {}, 0x2a3a40).pop();
+      mb.push().translate(lx, 18.6, lz).cylinder(1.15, 2.6, 8, {}, glowPaint(0xfff2c0, 0.75)).pop();
+      mb.push().translate(lx, 20.7, lz).cone(1.6, 1.6, 8, 0xc0392b).pop();
+      // Keeper's cottage.
+      slab(mb, x + 3, 0.6, z + 2, x + 8, 3.6, z + 7, grad(0xf3e7cf, 0.85), ALLS);
+      quadN(mb, [x + 2.8, 3.6, z + 1.8], [x + 2.8, 3.6, z + 7.2], [x + 5.5, 5.2, z + 7.2], [x + 5.5, 5.2, z + 1.8], [-1.6, 2.7, 0], P.ROOF_TILE);
+      quadN(mb, [x + 8.2, 3.6, z + 1.8], [x + 8.2, 3.6, z + 7.2], [x + 5.5, 5.2, z + 7.2], [x + 5.5, 5.2, z + 1.8], [1.6, 2.7, 0], P.ROOF_TILE_DARK);
+    } else if (variant === 1) {
+      // Cargo ship at anchor, bow toward the street end; hull in short pieces (curved world).
+      const x = 70, z0 = -44, z1 = -6;
+      slab(mb, x - 5, -2, z0 + 3, x + 5, 3.2, z1, { color: 0x2b4c6f, top: 0x335a80, bottom: 0x1d3550, jitter: 0.03 }, ALLS, true);
+      slab(mb, x - 5.02, -1.3, z0 + 3, x + 5.02, -0.2, z1, 0xa23b2c, NX | PX, true);
+      // Bow wedge.
+      quadN(mb, [x - 5, -2, z0 + 3], [x, -2, z0], [x, 3.6, z0 - 0.8], [x - 5, 3.2, z0 + 3], [-1, 0, -0.6], 0x2b4c6f);
+      quadN(mb, [x + 5, -2, z0 + 3], [x, -2, z0], [x, 3.6, z0 - 0.8], [x + 5, 3.2, z0 + 3], [1, 0, -0.6], 0x2b4c6f);
+      quadN(mb, [x - 5, 3.2, z0 + 3], [x + 5, 3.2, z0 + 3], [x, 3.6, z0 - 0.8], [x, 3.6, z0 - 0.8], [0, 1, 0], 0x6b7378);
+      // Containers in coloured stacks.
+      const cc = [0xd9453a, 0x2a9d8f, 0xe9b949, 0x3c7fa6, 0xe8e1d0, 0xe76f51];
+      for (let zc = z0 + 5; zc < z1 - 11; zc += 6.25) {
+        const hgt = 1 + rnd.int(3);
+        for (let k = 0; k < hgt; k++) {
+          for (const sx of [-1, 1]) slab(mb, x + (sx < 0 ? -4.4 : 0.1), 3.2 + k * 2.4, zc, x + (sx < 0 ? -0.1 : 4.4), 5.5 + k * 2.4, zc + 6, cc[rnd.int(cc.length)], ALLS);
+        }
+      }
+      // Bridge house at the stern + funnel.
+      slab(mb, x - 4.6, 3.2, z1 - 8.4, x + 4.6, 11, z1 - 2, grad(0xf4efe6, 0.85), ALLS);
+      slab(mb, x - 4.62, 9.2, z1 - 8.4, x + 4.62, 10.2, z1 - 2, 0x24323c, NX | PX | NZ);
+      mb.push().translate(x, 13, z1 - 4).cylinder(1.3, 4, 8, {}, grad(0xd9453a, 0.85)).pop();
+    } else {
+      for (let k = 0; k < 4; k++) {
+        const x = rnd.range(38, 80), z = -rnd.range(5, 45);
+        quadN(mb, [x, -1.2, z], [x, -1.2, z - 4], [x, 7, z - 2], [x, 7, z - 2], [-1, 0, 0], 0xf4efe6);
+        quadN(mb, [x, -1.2, z], [x, -1.2, z - 4], [x, 7, z - 2], [x, 7, z - 2], [1, 0, 0], 0xe4ddd0);
+        slab(mb, x - 1, -1.3, z - 4.5, x + 1, -0.5, z + 0.5, rnd.pick([0xe9e4d8, 0x2f6f8f, 0xd9563b]), ALLS);
+      }
     }
     return mb;
   }

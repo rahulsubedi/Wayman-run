@@ -60,14 +60,16 @@ export const ZONE_PALETTES: readonly ZonePalette[] = [
   },
   // 1 Harbor Front: golden hour, low orange sun front-right, long shadows across the road.
   {
-    sunColor: 0xffa04a, sunIntensity: 3.6, sunDir: [-0.193, -0.375, 0.907],
-    fillColor: 0x86a8ff, fillIntensity: 0.6, fillDir: [0.35, -0.4, -1],
-    skyColor: 0x8fb0d8, groundColor: 0x9a5a3e, hemiIntensity: 0.62,
-    fogColor: 0xf6b48c, fogNear: 42, fogFar: 175,
+    // The sun hangs low over the open sea on the left, so its glitter path lies on the water in
+    // view and the street-facing fronts on the right catch grazing light instead of being backlit.
+    sunColor: 0xffa04a, sunIntensity: 3.6, sunDir: [0.345, -0.375, 0.86],
+    fillColor: 0x86a8ff, fillIntensity: 0.6, fillDir: [-0.35, -0.4, -1],
+    skyColor: 0x8fb0d8, groundColor: 0x9a5a3e, hemiIntensity: 0.66,
+    fogColor: 0xf4b892, fogNear: 60, fogFar: 212,
     exposure: 1.05, bloom: 0.5, bloomThreshold: 1.0,
     sky: {
       zenith: 0x2f7f9e, upper: 0xc590b8, horizon: 0xffa98f, glow: 0xffd27a, glowStrength: 0.95,
-      sunAz: 6, sunEl: 6, sunColor: 0xffd59a, sun: 1,
+      sunAz: -22, sunEl: 6, sunColor: 0xffd59a, sun: 1,
       moonAz: -40, moonEl: 30, moon: 0, stars: 0,
       cloudTint: 0xffbfa6, clouds: 0.85,
     },

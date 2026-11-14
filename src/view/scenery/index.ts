@@ -18,6 +18,7 @@ import { CHUNK_LEN } from './layoutConst';
 import type { Box } from './buildings';
 import { lowTable, moduleDefs, shadowTable, widthTable } from './library';
 import { sceneryMaterial, waterMaterial } from './material';
+import { buildGlint } from './ground';
 
 /**
  * A chunk retires once its far end is this far behind the player (the camera is ~7 m behind;
@@ -92,6 +93,8 @@ export class SceneryView {
   private zoneOffset = 0;
   private lastS = 0;
   private time = 0;
+  /** Sun glitter on the harbour sea, kept level with the player (see buildGlint). */
+  private readonly glint: Mesh3D;
 
   constructor(stage: Stage) {
     this.stage = stage;
@@ -135,6 +138,9 @@ export class SceneryView {
       for (const ch of this.chunks) ch.node.position.z += dz;
     });
 
+    this.glint = new Mesh3D({ parent: this.root, geometry: buildGlint().build(), material: main, castShadow: false, label: 'glint' });
+    this.glint.receiveShadow = false;
+
     this.prewarm();
 
     // Shadow proxies: one shared unit cube, drawn only in the shadow pass (created after the
@@ -157,8 +163,16 @@ export class SceneryView {
     return o;
   }
 
-  update(playerS: number, zone: number, _zoneBlend: number, dt: number): void {
+  update(playerS: number, zone: number, zoneBlend: number, dt: number): void {
     this.time += dt;
+    // Glitter: shown around the harbour (the town lots hide it elsewhere), shimmering sideways.
+    const g = this.glint;
+    g.visible = zone === 1 || (zone === 0 && zoneBlend > 0.02);
+    if (g.visible) {
+      g.position.z = this.stage.worldZ(playerS);
+      g.scale.x = 1 + Math.sin(this.time * 2.3) * 0.025;
+      g.scale.z = 1 + Math.sin(this.time * 1.7 + 1) * 0.02;
+    }
     // Debug zone override: shift every chunk's zone by the difference to the positional zone.
     const posZone = Math.floor(playerS / ZONE_LENGTH) % ZONE_COUNT;
     const offset = (((zone - posZone) % ZONE_COUNT) + ZONE_COUNT) % ZONE_COUNT;
