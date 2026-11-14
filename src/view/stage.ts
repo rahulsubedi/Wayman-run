@@ -11,7 +11,10 @@
 // - Curved world (geom/worldBend.ts): every fogged material bends away with distance as a pure
 //   projection warp. Driven automatically from the true track distance given to `rebase()`;
 //   `setWorldBend()` overrides it, `setWorldBendEnabled(false)` turns it off (no recompiles).
-// - Backend safety (WebGPU is preferred when the adapter supports it, else WebGL2):
+// - Backend: `DEFAULT_BACKEND` decides what 'auto' (no `?renderer=`) means. It is WebGL2: the
+//   WebGPU path renders the same frames (verified frame by frame) but has only been run on a
+//   software adapter, gives no measured CPU win, and a lost device forces a page reload (below).
+//   `?renderer=webgpu` opts in. Safety net whenever WebGPU is attempted:
 //   1. init: `app.init` throwing on WebGPU falls back to WebGL2;
 //   2. probe: before the game builds anything, one frame with the project's custom-shader materials,
 //      a shadow-casting light and the post chain is rendered inside GPU error scopes; any
@@ -39,7 +42,14 @@ import type { GpuDeviceLike } from './gpuFallback';
 export type { Quality } from '../sim/types';
 
 export type Backend = 'webgpu' | 'webgl';
+/** 'auto' = `DEFAULT_BACKEND`, with WebGPU only when the adapter supports it. */
 export type BackendPreference = Backend | 'auto';
+
+/**
+ * What 'auto' picks. 'webgpu' = WebGPU when the adapter supports it (with the probe / watchdog
+ * fallback), else WebGL2. Kept on 'webgl' until WebGPU has been checked on real GPUs.
+ */
+export const DEFAULT_BACKEND: Backend = 'webgl';
 
 /** Extent of the hero-following shadow box, metres relative to the hero (run direction is -Z). */
 export interface ShadowReach {
@@ -112,7 +122,9 @@ async function pickBackend(pref: BackendPreference): Promise<{ backend: Backend;
   // A WebGPU failure earlier (this session, or a persistent one in the last days) means WebGL2,
   // unless WebGPU was asked for explicitly (`?renderer=webgpu`).
   const failed = gpuFailFlag();
-  if (failed && pref === 'auto') return { backend: 'webgl', why: `WebGPU failed earlier: ${failed}` };
+  if (pref === 'auto' && (failed || DEFAULT_BACKEND === 'webgl')) {
+    return { backend: 'webgl', why: failed ? `WebGPU failed earlier: ${failed}` : null };
+  }
   // @pixi/3d on WebGPU needs 'indirect-first-instance' or app.init throws: check first (documented guard).
   try {
     const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<{ features: Set<string> } | null> } }).gpu;

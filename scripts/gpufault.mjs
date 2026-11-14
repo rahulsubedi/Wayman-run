@@ -2,12 +2,13 @@
 // Forces each WebGPU failure path and checks the game ends up running on WebGL2 (build first).
 //
 //   node scripts/gpufault.mjs [--faults none,init,probe,shader,validation,lost] [--out shots/fault]
-//                             [--params "autostart=1&seed=1&autopilot=1&mute=1"] [--explicit]
+//                             [--params "autostart=1&seed=1&autopilot=1&mute=1"] [--auto]
 //
 // Each case runs in a fresh browser (SwiftShader WebGPU flags) with `window.__waymanGpuFault` set
 // before boot (see src/view/gpuFallback.ts), waits for the game (across the fallback reload, if
 // any), advances 2 s, screenshots, and prints the backend, the fallback reason and the stored flag.
-// --explicit adds renderer=webgpu to the URL (the opt-in path) instead of letting the game choose.
+// The URL carries renderer=webgpu (the opt-in path; the fallback reload drops it). --auto leaves the
+// choice to the game instead (WebGL2 by default, so only the 'none' case is then meaningful).
 // Exits non-zero when a case does not end on the expected backend or has page errors.
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
@@ -21,11 +22,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WEBGPU_FLAGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader',
   '--use-webgpu-adapter=swiftshader', '--use-angle=swiftshader'];
 
-const args = { faults: 'none,init,probe,shader,validation,lost', out: 'shots/fault', params: 'autostart=1&seed=1&autopilot=1&mute=1', explicit: false };
+const args = { faults: 'none,init,probe,shader,validation,lost', out: 'shots/fault', params: 'autostart=1&seed=1&autopilot=1&mute=1', explicit: true };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const k = argv[i].replace(/^--/, '');
-  if (k === 'explicit') args.explicit = true;
+  if (k === 'auto') args.explicit = false;
   else if (k in args) args[k] = argv[++i];
   else throw new Error(`unknown option --${k}`);
 }
@@ -79,7 +80,7 @@ for (const fault of args.faults.split(',')) {
       try { session = sessionStorage.getItem('wayman.webgpu.failed'); persistent = localStorage.getItem('wayman.webgpu.failed'); } catch { /* ignore */ }
       return { backend: st.backend, fallbackReason: st.fallbackReason, url: location.search, session, persistent, s: +window.__wayman.state().player.s.toFixed(1), hookErrors: window.__wayman.errors.slice() };
     }));
-    r.shot = join(args.out, `fault-${fault}${args.explicit ? '-explicit' : ''}.png`);
+    r.shot = join(args.out, `fault-${fault}${args.explicit ? '' : '-auto'}.png`);
     // Read the canvas back in the same task as a render: under these Chromium flags a WebGL page
     // never completes a compositor screenshot (sandbox artefact; plain WebGL launches are fine).
     const png = await page.evaluate(() => {
@@ -91,7 +92,7 @@ for (const fault of args.faults.split(',')) {
   } catch (e) {
     r.error = String(e && e.message || e).split('\n')[0];
   }
-  r.expected = fault === 'none' ? 'webgpu' : 'webgl';
+  r.expected = fault === 'none' && args.explicit ? 'webgpu' : 'webgl';
   r.ok = !r.error && r.backend === r.expected && !r.pageErrors.length && !(r.hookErrors?.length);
   if (!r.ok) failed = true;
   r.warnings = r.warnings.slice(0, 6);

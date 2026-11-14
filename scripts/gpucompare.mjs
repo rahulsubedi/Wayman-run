@@ -8,7 +8,8 @@
 // Every run is made deterministic before the steps: the ticker is stopped and the run restarted
 // with the same seed (`game.start(seed)`), so the same `advance` times give the same sim state on
 // both backends. Steps (separated by `|`): advance:<s>, js:<code> (with `game`; renders a frame),
-// shot:<name> (writes <out>/<name>-<backend>.png). The UI overlay is hidden.
+// shot:<name> (writes <out>/<name>-<backend>.png). The UI overlay is hidden. --menu skips the
+// restart (title-screen comparisons; omit autostart=1).
 // After both backends ran, every shot pair is compared: percentage of pixels whose max channel
 // difference exceeds 16 and 48, plus mean absolute difference; a <name>-diff.png heat map is written.
 // --perf N times N extra `stage.render()` calls (waiting for the GPU) per backend and reports
@@ -27,10 +28,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WEBGPU_FLAGS = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader',
   '--use-webgpu-adapter=swiftshader', '--use-angle=swiftshader'];
 
-const args = { out: 'shots/cmp', params: 'autostart=1&seed=1&mute=1', width: 1280, height: 720, steps: '', backends: 'webgl,webgpu', perf: 0, seed: 1 };
+const args = { out: 'shots/cmp', params: 'autostart=1&seed=1&mute=1', width: 1280, height: 720, steps: '', backends: 'webgl,webgpu', perf: 0, seed: 1, menu: false };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   const k = argv[i].replace(/^--/, '');
+  if (k === 'menu') { args.menu = true; continue; }
   if (!(k in args)) throw new Error(`unknown option --${k}`);
   args[k] = typeof args[k] === 'number' ? Number(argv[++i]) : argv[++i];
 }
@@ -74,6 +76,8 @@ for (const backend of args.backends.split(',')) {
   // stopped (menu camera orbit, coin spin clocks, particle seeds) cannot differ between backends.
   await page.addInitScript(() => {
     const t0 = performance.now();
+    const real = performance.now.bind(performance);
+    window.__realNow = real;
     performance.now = () => t0;
     const raf = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (cb) => raf(() => cb(t0));
@@ -85,11 +89,11 @@ for (const backend of args.backends.split(',')) {
     await page.addStyleTag({ content: '#ui{display:none!important}' });
     run.backend = await page.evaluate(() => window.__wayman.game.stage.backend);
     if (run.backend !== backend) run.errors.push(`backend mismatch: asked ${backend}, running ${run.backend}`);
-    await page.evaluate((seed) => {
+    await page.evaluate(([seed, menu]) => {
       const game = window.__wayman.game;
       game.stage.app.ticker.stop();
-      game.start(seed);
-    }, args.seed);
+      if (!menu) game.start(seed);
+    }, [args.seed, args.menu]);
     for (const { op, val } of steps) {
       if (op === 'advance') await page.evaluate((s) => window.__wayman.advance(Number(s)), val);
       else if (op === 'js') {
@@ -153,15 +157,19 @@ for (const backend of args.backends.split(',')) {
         const drawCalls = draws;
         const bundlesReplayed = bundles;
         for (const u of unwrap) u();
-        const times = [];
+        // performance.now is frozen (see addInitScript): time with the real clock saved in the page
+        const now = window.__realNow;
+        const times = [], cpu = [];
         for (let i = 0; i < n; i++) {
-          const t0 = Date.now(); // performance.now is frozen (see addInitScript)
+          const t0 = now();
           game.stage.render();
+          const t1 = now(); // JS + command submission only (what a real GPU would not hide)
           await wait();
-          times.push(Date.now() - t0);
+          times.push(now() - t0);
+          cpu.push(t1 - t0);
         }
-        times.sort((a, b) => a - b);
-        return { drawCalls, bundlesReplayed, frames: n, medianMs: +times[Math.floor(n / 2)].toFixed(1), minMs: +times[0].toFixed(1) };
+        const med = (a) => +a.sort((x, y) => x - y)[Math.floor(a.length / 2)].toFixed(1);
+        return { drawCalls, bundlesReplayed, frames: n, submitMsMedian: med(cpu), frameMsMedian: med(times) };
       }, args.perf);
     }
   } catch (e) {
