@@ -116,6 +116,10 @@ const SCENES = {
   gateway: `
     G.autopilot = null; sim.clearTrack(true); G.forceZone = null; while (p.s < 470) G.tick(1/30);
     await shot('s' + p.s.toFixed(0)); for (let i = 0; i < 7; i++) { until(() => false, null, 1/60, 0.35); await shot('s' + p.s.toFixed(0)); }`,
+  harbor: `
+    fresh(1.5); const s0 = p.s; sim.placeEntity('blocker', 1, s0 + 30); sim.placeEntity('truck', -1, s0 + 40); sim.placeEntity('hurdle', 0, s0 + 26);
+    await shot('centre'); press('left'); run(0.5); await shot('left lane'); press('right'); run(0.25); press('right'); run(0.5); await shot('right lane');
+    press('left'); run(0.5); press('jump'); run(0.35); await shot('jump');`,
   pause: `
     fresh(1.0); press('left'); run(0.08); G.pause(); run(0.5); await shot('paused'); G.resume(); run(0.05); await shot('resumed'); run(0.4); await shot('+0.4');`,
 };

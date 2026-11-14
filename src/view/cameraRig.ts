@@ -32,12 +32,14 @@ const FRAME_HALF_WIDTH = LANE_WIDTH + 1.45;
 const CORRIDOR_X = 3.9;
 /** Mid-swing limit of |x| for wide transition arcs (keeps sidewalk props well out of the frame). */
 const SWING_X = 2.4;
+/** Harbor lean: frame centre shift (m, toward the sea) at the hero on tall portrait screens. */
+const HARBOR_SHIFT = 1.5;
 /** Run entry swing: max |x| while beside / in front of the hero, and once looking down the street. */
 const ENTRY_X_SIDE = 3.5;
 const ENTRY_X_BEHIND = 1.9;
 /** Ending camera candidates, in order: azimuth (deg from straight behind), side (1 = preferred side). */
-const CRASH_VIEWS: readonly number[] = [62, 1, 35, 1, 62, -1, 0, 1, 90, 1];
-const CAUGHT_VIEWS: readonly number[] = [146, 1, 180, 1, 146, -1, 120, 1, 120, -1];
+const CRASH_VIEWS: readonly number[] = [62, 1, 35, 1, 0, 1, 62, -1, 90, 1];
+const CAUGHT_VIEWS: readonly number[] = [146, 1, 180, 1, 120, 1, 146, -1, 120, -1];
 /** Camera never goes above this (overhead bunting / gateways hang at y >= 11). */
 const CEILING_Y = 10;
 const BLEND_TIME: Record<CameraMode, number> = { run: 1.1, menu: 0.9, over: 0.55 };
@@ -131,6 +133,9 @@ export class CameraRig {
   private idle = 0;
   private wasFlying = false;
   private overReason: GameOverReason = 'crash';
+  /** Harbor lean: target (from the zone) and smoothed value, 0..1. */
+  private harborGoal = 0;
+  private harbor = 0;
   private readonly spot: OverSpot = { chosen: false, az: 0, r: 5, h: 4, side: 1 };
   /** Hero position (world x, z) at the last update, and at the moment the last mode change began. */
   private heroX = 0;
@@ -163,6 +168,11 @@ export class CameraRig {
   /** Track solids (sim entities) the ending camera keeps its line of sight clear of. */
   setObstacles(list: () => readonly Entity[]): void {
     this.obstacles = list;
+  }
+
+  /** Harbor Front weight 0..1 (blended with the zone transition): lean the chase view toward the sea. */
+  setHarbor(w: number): void {
+    this.harborGoal = clamp01(w);
   }
 
   /** Switch framing; blends from the current pose. The first call turns mode inference off. */
@@ -209,6 +219,7 @@ export class CameraRig {
     this.boost = p.action === 'fly' ? 1 : 0;
     this.fovKick = 0;
     this.trauma = 0;
+    this.harbor = this.harborGoal;
     this.overTime = 0;
     this.spot.chosen = false;
     this.idle = 0;
@@ -252,6 +263,7 @@ export class CameraRig {
     if (!flying && !p.grounded && this.boost > 0.02 && p.vy < 0) fw = clamp01((p.y - (p.groundY ?? 0)) / 5) * this.boost;
     this.boost += (fw - this.boost) * damp(flying ? 5 : 4, dt);
     this.fovKick *= Math.exp(-dt * 3);
+    this.harbor += (this.harborGoal - this.harbor) * damp(1.2, dt);
     if (flying && !this.wasFlying && dt > 0) this.kick(4); // take-off punch
     this.wasFlying = flying;
     this.x += (this.followX(p.x, this.boost) - this.x) * damp(6, dt);
@@ -428,14 +440,18 @@ export class CameraRig {
     let back = lerp(lerp(6.4, 8.2, pt), 6.9 + pt * 1.6, fw) - uw * 0.5;
     const height = lerp(lerp(3.4, 4.3, pt), 2.1 + pt * 0.2, fw) - uw * 0.35;
 
+    // Harbor lean (portrait-weighted: desktop already shows the quay): the view yaws toward the
+    // sea on the left; the half-width kept in view grows by the shift so the right lane stays in.
+    const lean = this.harbor * (1 - fw) * lerp(0.25, 1, pt);
+    const shift = lean * HARBOR_SHIFT;
     // Aspect-aware: widen FOV (up to a cap), then pull back, until the lanes fit at the hero.
     const dist = Math.hypot(back, height - 1);
-    const needTan = FRAME_HALF_WIDTH / (dist * aspect);
+    const needTan = (FRAME_HALF_WIDTH + shift) / (dist * aspect);
     const needFov = (2 * Math.atan(needTan)) / D2R;
     const maxFov = 76 + fw * 4;
     if (needFov > fov) fov = Math.min(maxFov, needFov);
     const haveTan = Math.tan((fov / 2) * D2R) * aspect;
-    if (haveTan * dist < FRAME_HALF_WIDTH) back = Math.sqrt(Math.max(0, (FRAME_HALF_WIDTH / haveTan) ** 2 - (height - 1) ** 2));
+    if (haveTan * dist < FRAME_HALF_WIDTH + shift) back = Math.sqrt(Math.max(0, ((FRAME_HALF_WIDTH + shift) / haveTan) ** 2 - (height - 1) ** 2));
     // Ultrawide: keep the horizontal field of a ~2:1 screen instead of growing it, so the vertical
     // field narrows (less sky and roofs, a bigger hero) while all lanes stay in view.
     if (aspect > 2) {
@@ -444,10 +460,11 @@ export class CameraRig {
     }
 
     const sup = this.support;
-    o.px = this.x;
+    o.px = this.x - lean * 0.35;
     o.py = Math.min(CEILING_Y, sup + height);
     o.pz = hz + back;
-    o.lx = this.lookX;
+    // Look-target shift that moves the frame centre by `shift` at the hero's distance.
+    o.lx = this.lookX - lean * 0.35 - shift * (1 + lerp(10, 15, pt) / Math.max(1, back));
     // Look target: down the street; keeps a jumping / rising hero in frame; looks down in flight.
     o.ly = sup + lerp(1.15, 2.0, pt) + Math.max(0, p.y - sup) * (this.wasFlying ? 1 : lerp(0.3, 0.75, fw)) - fw * lerp(2.9, 2.3, pt) - uw * 0.15;
     o.lz = hz - lerp(10, 15, pt) - fw * 2;
@@ -503,7 +520,8 @@ export class CameraRig {
     // caught. Once the game-over panel arrives it slides clear: left of the centred panel on
     // landscape screens, above it on portrait phones.
     const slide = smooth01((this.overTime - 0.35) / 0.65);
-    const u = slide * lerp(caught ? -0.44 : -0.36, 0, pt);
+    // (Toward the side the camera stands on: the hero falls back toward it, away from the solids.)
+    const u = slide * lerp(caught ? -0.46 : -0.42, 0, pt) * spot.side;
     const v = slide * lerp(0, 0.58, pt);
     this.aim(o, p.x + (caught ? spot.side * 0.2 : 0), p.y + (caught ? 0.9 : 0.4), hz + (caught ? 1.2 : 1.1), u, v);
   }
@@ -519,7 +537,7 @@ export class CameraRig {
     let pref: 1 | -1 = p.x > 0.5 ? -1 : p.x < -0.5 ? 1 : this.sideLoad(p, hz, 1) <= this.sideLoad(p, hz, -1) ? 1 : -1;
     if (caught && Math.abs(p.x) <= 0.5 && this.sideLoad(p, hz, 1) === this.sideLoad(p, hz, -1)) pref = 1;
     const views = caught ? CAUGHT_VIEWS : CRASH_VIEWS;
-    const r = caught ? 4.7 : 5.0;
+    const r = caught ? 4.7 : 5.8;
     const h0 = caught ? 4.0 : 3.5;
     // Each view first tries going higher (up to +3 m) before the next view is considered; then
     // every view once more from high up.
@@ -529,6 +547,8 @@ export class CameraRig {
         const az = views[i] * D2R * side;
         for (let hi = pass === 0 ? 0 : 3; hi < (pass === 0 ? 3 : 5); hi++) {
           const h = h0 + hi * 1.5;
+          // First pass: only spots with room to stand back (not squeezed against the kerb).
+          if (pass === 0 && this.squeezed(p, az, r)) break;
           if (this.spotClear(p, hz, az, r, h, caught)) {
             spot.az = az; spot.r = r; spot.h = h; spot.side = side; spot.chosen = true;
             return;
@@ -537,6 +557,13 @@ export class CameraRig {
       }
     }
     spot.az = views[0] * D2R * pref; spot.r = r * 0.8; spot.h = h0 + 5; spot.side = pref; spot.chosen = true;
+  }
+
+  /** True when the road corridor forces the camera much closer than `r` at azimuth `az`. */
+  private squeezed(p: PlayerState, az: number, r: number): boolean {
+    const sx = Math.sin(az);
+    const room = sx > 0 ? CORRIDOR_X - p.x : CORRIDOR_X + p.x;
+    return Math.abs(sx) * r > room && room / Math.abs(sx) < r * 0.65;
   }
 
   /** Number of solids beside the hero on `side` (within a few metres). */

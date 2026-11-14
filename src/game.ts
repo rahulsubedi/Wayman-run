@@ -73,7 +73,7 @@ const DRONE_CATCH_GAP = 1.7;
 /** Node height below a roof top that puts the drone's underside ~0.5 m above that roof. */
 const DRONE_ROOF_BASE = DRONE_BODY_BOTTOM - 0.5;
 /** Extra node height when the drone is close in front of the chase camera. */
-const DRONE_NEAR_LIFT = 0.75;
+const DRONE_NEAR_LIFT = -0.3;
 
 const SFX: Partial<Record<SimEvent['type'], SfxName>> = {
   coin: 'coin',
@@ -507,6 +507,8 @@ export class Game {
     }
 
     this.fx.update(st, dt);
+    // Harbor Front has the open quay on the left: the chase camera leans toward the sea there.
+    this.cameraRig.setHarbor(zone === 1 ? 1 - blend : zone === 0 ? blend : 0);
     this.cameraRig.update(p, dt);
     if (running) {
       this.ui.updateHud(st);
@@ -547,11 +549,11 @@ export class Game {
     let gv = this.viewGap;
     if (!over) {
       const camBack = cam.position.z - heroZ;
-      const hold = clamp(camBack - 3.4, 2.4, 3.4);
+      const hold = clamp(camBack - 4.2, 1.6, 3.4);
       if (gv > hold) gv = gv < 7 ? hold + (gv - hold) * 0.12 : hold + (7 - hold) * 0.12 + (gv - 7) * 1.8;
     }
     cs.gap = gv + this.droneFly * 14;
-    cs.visible = this._mode !== 'menu' && st.chaser.visible;
+    cs.visible = this._mode !== 'menu' && st.chaser.visible && !(over && !caught);
 
     const ds = p.s - cs.gap;
     const dz = this.stage.worldZ(ds);
@@ -585,6 +587,19 @@ export class Game {
       }
     }
     if (raise) baseGoal = Math.max(baseGoal, this.solidTop(p.x, ds) - DRONE_ROOF_BASE);
+    let hop = 0;
+    if (!over && camDist < 9) {
+      // Close in front of the chase camera, a drone lined up with the hero (while it follows him
+      // across lanes) would cover him: hop up over his head on screen until it is beside him again.
+      const camX = cam.position.x;
+      const heroDist = Math.max(1, cam.position.z - heroZ);
+      const sep = Math.abs((this.droneX - camX) / Math.max(1, camDist) - (p.x - camX) / heroDist);
+      hop = clamp((0.32 - sep) / 0.2, 0, 1) * (1 - camDist / 9);
+      baseGoal += 1.8 * hop;
+      // Falling back past the camera (the sim lets it go after the stumble window): climb out of
+      // the top of the frame instead of sweeping past the lens.
+      baseGoal += 3.5 * clamp((this.viewGap - 6) / 5, 0, 1);
+    }
     if (caught) baseGoal = ground - 0.45 + 0.8 * catchK; // pounce: down over the hero, just behind his head
     let goalX = this.sideX(this.droneSide, p.x, offset);
     if (!over && camDist < 20) {
@@ -599,11 +614,12 @@ export class Game {
       this.droneBase = baseGoal;
       this.droneInit = true;
     }
-    const kx = 1 - Math.exp(-dt * 5);
+    // Follows the hero's lane changes briskly so he does not run through it on screen.
+    const kx = 1 - Math.exp(-dt * 10);
     this.droneX += (goalX - this.droneX) * kx;
     // Climb quickly when it has to clear a roof, settle back more calmly.
     const up = baseGoal > this.droneBase;
-    this.droneBase += (baseGoal - this.droneBase) * (1 - Math.exp(-dt * (up ? (raise ? 7 : 3.5) : caught ? 6 : 3)));
+    this.droneBase += (baseGoal - this.droneBase) * (1 - Math.exp(-dt * (up ? (raise || hop > 0 ? 9 : 3.5) : caught ? 6 : 3)));
 
     node.position.set(this.droneX, this.droneBase, dz);
     // Seen from close it would fill the screen: shrink it a little.
